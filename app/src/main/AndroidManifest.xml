@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The voice loop is two network pipes (VoiceManager, Hermes). Declared here rather than
+         inherited from whichever dependency happens to merge it in: the console's network access is
+         the console's own business. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- The always-on anchor (REQ-25): a foreground service of type microphone keeps the process
+         alive as an appliance, not an app. Android 14+ demands the typed FGS permission pair, and
+         the anchor's notification needs POST_NOTIFICATIONS on 13+ - though the service must start
+         (and does) even while that grant is still pending. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Screen-off survival (REQ-26): the anchor holds a partial wake lock so the CPU keeps
+         running the wake-word engine after the display sleeps. In doze the OS only honours an
+         app's wake lock while the app is battery-exempt - the Unrestricted battery setting in
+         docs/device-setup.md is the other half of this permission. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Hands-off reachability (T-48): wireless debugging resets at every boot by framework
+         design, which for a wall-mounted tablet means a ladder before any adb. This is a
+         development permission - the install alone grants nothing; it becomes live only after
+         an explicit `pm grant` from a connected host (docs/device-setup.md), and the anchor's
+         write of adb_wifi_enabled stays a logged no-op without it. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <!-- The app drawer's window on the device (T-53, REQ-42): the console is HOME, so it is the
+         launcher, and a launcher legitimately needs to see what it launches. On API 30+ package
+         visibility is off by default; this declares exactly the query the drawer runs -
+         MAIN/CATEGORY_LAUNCHER - rather than reaching for QUERY_ALL_PACKAGES, so the console sees
+         launchable apps and nothing more. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.HermesConsole">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.HermesConsole">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- HOME is how the console survives a cold reboot with zero interaction (REQ-25):
+                 the system launches the HOME activity at boot, so being the launcher *is* the
+                 autostart mechanism. The LAUNCHER filter above stays so the console can still be
+                 opened normally while some other launcher holds the role. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- The process anchor (REQ-25). Deliberately empty of logic: the voice loop lives in the
+             Activity's world; this service exists so the OS treats the process as a foreground,
+             microphone-using appliance and keeps its hands off it. -->
+        <service
+            android:name=".MicForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
+        <!-- The assistant role (REQ-25). BIND_VOICE_INTERACTION means only the system can bind;
+             the meta-data XML naming a session service and a recognition service is what makes
+             this a *valid* assistant in the picker - the system rejects the entry without both. -->
+        <service
+            android:name=".ConsoleVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+        <service
+            android:name=".ConsoleVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service
+            android:name=".ConsoleRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

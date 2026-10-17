@@ -1,0 +1,49 @@
+# APM-only shared library (REQ-10): links the WebRTC AudioProcessing module and
+# this repo's JNI bridge - nothing from the wider SDK surface (no PeerConnection,
+# no media, no signaling). This file is injected into the pinned WebRTC checkout
+# by webrtc-build/build.sh and compiled there, so the checkout stays pristine.
+#
+# The ninja target is exactly this: `ninja -C out/android-arm64 webrtc_apm`
+# builds the .so without touching the full `webrtc` static lib target.
+#
+# rtc_shared_library (not the raw shared_library template) so the target gets
+# WebRTC's standard configs, including the suppressions for the chromium-style
+# clang plugin on WebRTC's own headers.
+
+import("//webrtc.gni")
+
+config("webrtc_apm_visibility") {
+  # Export only the JNI entry points (JNIEXPORT -> default visibility). The APM
+  # internals stay linked but hidden, so the dynamic symbol table is exactly the
+  # JNI surface and no PeerConnection symbols can leak in even by accident.
+  cflags = [ "-fvisibility=hidden" ]
+}
+
+shared_library("webrtc_apm") {
+  sources = [ "webrtc_apm_jni.cc" ]
+
+  # Android hides all but JNI_OnLoad by default (version script). This library
+  # resolves its Java_* entry points by name at runtime, so remove that config.
+  # With :webrtc_apm_visibility (-fvisibility=hidden) the exports are exactly
+  # the JNIEXPORT functions.
+  configs -= [
+    "//build/config/android:hide_all_but_jni_onload",
+    "//build/config/clang:find_bad_constructs",  # as rtc_* templates do
+  ]
+
+  configs += [
+    "//build/config/android:runtime_library",
+    ":webrtc_apm_visibility",
+  ]
+
+  deps = [
+    "//api/audio:builtin_audio_processing_builder",
+    "//api/environment:environment_factory",
+    "//modules/audio_processing:audio_processing",
+    "//rtc_base:checks",
+    "//rtc_base:logging",
+  ]
+
+  # __android_log_print for the load/health log lines.
+  libs = [ "log" ]
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The console talks to two servers on the LAN - VoiceManager and the Hermes gateway - and both speak
+  plain HTTP/WS on a private network, with no certificate to validate against.
+
+  They are not listed here as domain exceptions because they cannot be: every host is runtime
+  configuration (REQ-28), set from the settings screen and pointed at whatever address the backends
+  happen to live on. There is no compiled-in hostname to pin.
+
+  Both clients already carry a `tls` flag, so this opens up the day the backends grow certificates.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

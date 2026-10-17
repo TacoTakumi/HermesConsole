@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug-only: the kit's preview harness, launchable on its own so the design system can
+             be seen with the console not running. Fully-qualified name because a library's manifest
+             entries are merged into the consumer's package. -->
+        <activity
+            android:name="com.hermesconsole.lcars.LcarsGalleryActivity"
+            android:exported="true"
+            android:label="LCARS Gallery"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
+    </application>
+</manifest>

@@ -1,0 +1,24 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+
+# The backends' api keys, for the instrumented tests that talk to them. Never compiled in, never
+# logged (REQ-28) - and never committed.
+.env
+
+# specflo's local state (active project pointer). The project artifacts it produces -
+# brainstorm/spec/plan under docs/projects/ - are versioned; this is just the bookmark.
+.specflo/
+app/src/androidTest/assets/*.pcm
+
+# ~62 MB of sherpa-onnx binaries, fetched and SHA-256-pinned by scripts/fetch-wakeword-assets.sh.
+# keywords.txt is deliberately NOT ignored: it is hand-authored, pre-tokenized BPE, not a download.
+wakeword/libs/*.aar
+wakeword/src/main/assets/kws/*.onnx
+wakeword/src/main/assets/kws/tokens.txt
+
+# WebRTC APM source checkout + build cache (multi-GB, fetched by webrtc-sdk/webrtc-build/build.sh)
+webrtc-sdk/webrtc-build/.cache/

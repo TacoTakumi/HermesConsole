@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The assistant-role contract (REQ-25): the system's VoiceInteractionServiceInfo refuses any
+     candidate whose meta-data does not name BOTH a session service and a recognition service, so
+     both stubs are declared even though the console's voice path never touches them. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.hermesconsole.app.ConsoleVoiceInteractionSessionService"
+    android:recognitionService="com.hermesconsole.app.ConsoleRecognitionService"
+    android:supportsAssist="true" />

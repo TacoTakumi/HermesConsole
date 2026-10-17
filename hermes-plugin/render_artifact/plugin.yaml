@@ -1,0 +1,6 @@
+name: render_artifact
+description: "HermesConsole artifact channel - the render_artifact tool whose typed args ride the /v1/runs SSE stream to the wall console's LCARS panes"
+version: "1.0.0"
+author: "rob"
+provides_tools:
+  - render_artifact

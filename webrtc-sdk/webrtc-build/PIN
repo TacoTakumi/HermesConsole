@@ -1,0 +1,11 @@
+# Pinned WebRTC source revision for the APM-only build (REQ-09, REQ-10, D-02).
+#
+# WEBRTC_PIN_REF: the branch the checkout is pinned to (the "pinned branch" the
+# acceptance asks for). This is the newest stable branch-head at pin time.
+# WEBRTC_PIN_COMMIT: the exact commit, recorded so the build is reproducible
+# even if the branch moves. Update both together, and only on purpose.
+#
+# Current pin: WebRTC 144 line, branch-heads/8009, cut 2026-08-14
+# ("Update WebRTC code version (2026-08-14T04:07:04)").
+WEBRTC_PIN_REF="refs/branch-heads/8009"
+WEBRTC_PIN_COMMIT="4d6a08b746f2d3f317c89a6316a04ec541f6032f"
