@@ -127,6 +127,15 @@ out of your other Hermes sessions.
      Several consoles can share the profile: a tool call goes to the console
      that shows the conversation that made it.
 
+     Install the app before you try a new device tool. If the model gets a
+     device request that no installed tool covers, it works around it (for
+     example with the gateway's terminal), and Hermes's background
+     self-review can save that workaround as a skill in the console
+     profile. The skill then contradicts the real tool when it arrives:
+     after a failed volume request, a `console-audio-control` skill said no
+     volume tool exists, and the next volume request was slow. After such a
+     failure, check the profile's `skills/` folder and delete the skill.
+
    `HERMES_HOME_DIR` is relative to the gateway user's home. The script stops
    when `HERMES_HOME_DIR`, `HERMES_SERVICE` or `HERMES_URL` is not set. All
    three must name the same profile: the script then never installs the
