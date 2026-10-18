@@ -8,6 +8,13 @@
   the calculator" or "go back to the console". Android 14 and later let no app
   end another app, so the app it leaves keeps running in the background, and
   the tool tells the model so.
+- Device tools get_volume and set_volume, for "turn the media down" or "speak
+  quieter". media is the tablet's media stream, which YouTube and Spotify play
+  on. voice is the console's own level for its speech, announcements and
+  cues: it applies at once, also to a reply already playing, and the console
+  keeps it across a restart. set_volume takes a percent or a direction (10
+  points up or down) and replies with the level set. Voice does not go below
+  10 percent, so the console stays audible.
 
 ### Changed
 

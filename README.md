@@ -115,10 +115,15 @@ out of your other Hermes sessions.
    - `device_tools` adds the `/v1/device/ws` socket. The console connects to
      it, so the gateway never has to reach the tablet, also behind a VPN or
      with a changing address. The tools the console declares there
-     (`list_apps`, `launch_app` and `return_home`) appear in this profile
-     only. `return_home` brings the console back to the front. Android 14
-     and later let no app end another app, so this is how the console closes
-     an app: the app keeps running in the background until Android ends it.
+     (`list_apps`, `launch_app`, `return_home`, `get_volume` and
+     `set_volume`) appear in this profile only. `return_home` brings the
+     console back to the front. Android 14 and later let no app end another
+     app, so this is how the console closes an app: the app keeps running in
+     the background until Android ends it. `get_volume` and `set_volume` read
+     and set two levels: media is the tablet's media stream, which other apps
+     play on, and voice is the console's own level for its speech,
+     announcements and cues, kept in its settings. Voice does not go below
+     10 percent.
      Several consoles can share the profile: a tool call goes to the console
      that shows the conversation that made it.
 
