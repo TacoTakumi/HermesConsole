@@ -20,7 +20,12 @@ from pathlib import Path
 
 
 def enabled_list(lines):
-    """(index of the "  enabled:" line, indexes of its "- name" items), or None without one."""
+    """What plugins.enabled holds, or None when the file has no plugins.enabled key.
+
+    A dict: "key" (index of the "  enabled:" line), "kind" ("block", "flow", "empty" or "unknown"),
+    "names" (the plugin names listed), "items" (indexes of block items), "indent" (a block item's
+    indent) and "comment" (a trailing comment on the key line, or "").
+    """
     try:
         start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
     except StopIteration:
@@ -30,25 +35,38 @@ def enabled_list(lines):
         key = next(i for i in range(start + 1, end) if re.match(r"^  enabled:", lines[i]))
     except StopIteration:
         return None
-    items = []
-    for i in range(key + 1, end):
-        if re.match(r"^\s{4,}-\s", lines[i]):
-            items.append(i)
-        elif lines[i].strip() and not lines[i].lstrip().startswith("#"):
-            break
-    return key, items
-
-
-def listed(lines, items, name):
-    return any(re.match(r"^\s*-\s*%s\s*$" % re.escape(name), lines[i]) for i in items)
+    m = re.match(r"^  enabled:\s*(.*?)\s*(#.*)?$", lines[key].rstrip("\n"))
+    value, comment = m.group(1), m.group(2) or ""
+    found = {"key": key, "names": [], "items": [], "indent": "    ", "comment": comment}
+    if value == "":
+        found["kind"] = "block"
+        for i in range(key + 1, end):
+            item = re.match(r"^(\s{2,})-\s*(.*?)\s*(#.*)?$", lines[i].rstrip("\n"))
+            if item:
+                if not found["items"]:
+                    found["indent"] = item.group(1)
+                found["items"].append(i)
+                found["names"].append(item.group(2).strip("'\""))
+            elif lines[i].strip() and not lines[i].lstrip().startswith("#"):
+                break
+        if not found["items"]:
+            found["kind"] = "empty"
+    elif value in ("null", "~", "[]"):
+        found["kind"] = "empty"
+    elif re.match(r"^\[.*\]$", value):
+        found["kind"] = "flow"
+        found["names"] = [n.strip().strip("'\"") for n in value[1:-1].split(",") if n.strip()]
+    else:
+        found["kind"] = "unknown"
+    return found
 
 
 def check(path, plugins):
-    lines = path.read_text().splitlines()
-    found = enabled_list(lines)
+    found = enabled_list(path.read_text().splitlines())
+    names = found["names"] if found is not None else []
     rc = 0
     for name in plugins:
-        if found is not None and listed(lines, found[1], name):
+        if name in names:
             print("CHECK: config.yaml: %s is in plugins.enabled" % name)
         else:
             print("CHECK: config.yaml: %s NOT in plugins.enabled - run deploy" % name, file=sys.stderr)
@@ -59,19 +77,26 @@ def check(path, plugins):
 def enable(path, plugins):
     lines = path.read_text().splitlines(keepends=True)
     found = enabled_list(lines)
-    if found is None:
-        sys.exit("config: no plugins.enabled list - add %s to it by hand" % ", ".join(plugins))
-    key, items = found
-    missing = [n for n in plugins if not listed(lines, items, n)]
+    if found is None or found["kind"] == "unknown":
+        sys.exit("config: plugins.enabled is missing or holds a value this script cannot edit - "
+                 "add %s to it by hand" % ", ".join(plugins))
+    missing = [n for n in plugins if n not in found["names"]]
     if not missing:
         print("config: %s already enabled" % ", ".join(plugins))
         return 0
     backup = path.with_name("config.yaml.bak." + time.strftime("%Y%m%d_%H%M%S"))
     shutil.copy2(path, backup)
-    if re.match(r"^  enabled:\s*\[\s*\]\s*$", lines[key]):
-        lines[key] = "  enabled:\n"
-    at = (items[-1] if items else key) + 1
-    lines[at:at] = ["    - %s\n" % n for n in missing]
+    key, comment = found["key"], ("  " + found["comment"]) if found["comment"] else ""
+    if found["kind"] == "flow":
+        lines[key] = "  enabled: [%s]%s\n" % (", ".join(found["names"] + missing), comment)
+    else:
+        if found["kind"] == "empty":
+            lines[key] = "  enabled:%s\n" % comment
+        at = (found["items"][-1] if found["items"] else key) + 1
+        # A last line without its newline would swallow the first inserted item.
+        if not lines[at - 1].endswith("\n"):
+            lines[at - 1] += "\n"
+        lines[at:at] = ["%s- %s\n" % (found["indent"], n) for n in missing]
     path.write_text("".join(lines))
     print("config: enabled %s (backup %s)" % (", ".join(missing), backup.name))
     return 0

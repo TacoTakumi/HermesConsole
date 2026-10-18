@@ -7,6 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 SCRIPT = Path(__file__).resolve().parent / "hermes_plugin_config.py"
 HOME_DIR = ".hermes/profiles/console"
 
@@ -78,3 +81,49 @@ def test_an_empty_inline_enabled_list_is_expanded(tmp_path):
     path = config(tmp_path, "plugins:\n  enabled: []\n  disabled: []\n")
     assert run(tmp_path, "enable", "device_tools").returncode == 0
     assert path.read_text() == "plugins:\n  enabled:\n    - device_tools\n  disabled: []\n"
+
+
+# Every shape of plugins.enabled a config.yaml can hold. Each case: the file, what check must report
+# for device_tools before deploy, and the list the file must hold after enable (None: enable must
+# refuse and leave the file alone).
+SHAPES = {
+    "block list": ("plugins:\n  enabled:\n    - render_artifact\n  disabled: []\n",
+                   ["render_artifact", "device_tools"]),
+    "indentless block list": ("plugins:\n  enabled:\n  - render_artifact\n  disabled: []\n",
+                              ["render_artifact", "device_tools"]),
+    "empty flow list with a comment": ("plugins:\n  enabled: []  # none yet\n", ["device_tools"]),
+    "null": ("plugins:\n  enabled: null\n", ["device_tools"]),
+    "tilde": ("plugins:\n  enabled: ~\n", ["device_tools"]),
+    "empty value then another key": ("plugins:\n  enabled:\n  disabled: []\n", ["device_tools"]),
+    "flow list": ("plugins:\n  enabled: [my-approval-plugin, render_artifact]  # kept\n",
+                  ["my-approval-plugin", "render_artifact", "device_tools"]),
+    "no final newline": ("plugins:\n  enabled:\n    - render_artifact", ["render_artifact", "device_tools"]),
+    "unknown inline value": ("plugins:\n  enabled: some_string\n", None),
+}
+
+
+def enabled_after(path):
+    return (yaml.safe_load(path.read_text())["plugins"] or {}).get("enabled")
+
+
+@pytest.mark.parametrize("shape", sorted(SHAPES))
+def test_every_enabled_shape_is_read_and_edited_into_valid_yaml(tmp_path, shape):
+    text, expected = SHAPES[shape]
+    path = config(tmp_path, text)
+
+    before = run(tmp_path, "check", "render_artifact", "device_tools")
+    assert before.returncode == 1
+    assert "device_tools NOT in plugins.enabled" in before.stderr
+    if "render_artifact" in text and expected is not None:
+        assert "render_artifact is in plugins.enabled" in before.stdout
+
+    result = run(tmp_path, "enable", "device_tools")
+    if expected is None:
+        assert result.returncode != 0
+        assert path.read_text() == text
+        return
+    assert result.returncode == 0, result.stderr
+    assert enabled_after(path) == expected
+    if "#" in text:
+        assert text.split("#", 1)[1].strip() in path.read_text()
+    assert run(tmp_path, "check", *expected).returncode == 0
