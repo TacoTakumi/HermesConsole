@@ -20,6 +20,10 @@ console's socket. A console claims the session it shows with a session frame, af
 on every change. A call goes to the console that claimed the calling run's session, the newest
 claim first, and to no other console: with no claim the call fails.
 
+The calling run's session is not always the id the console claimed. A compression moves a session
+to a new tip, and a subagent runs in a child session. So a call is keyed by the run's start session,
+which a subagent inherits, and matches a claim anywhere in that session's compression lineage.
+
 The tools stay registered when the socket closes. Every register or dispose bumps the registry
 generation, which rebuilds cached agents and makes an open conversation process its whole history
 again, so a Wi-Fi drop must not churn the tool list. A hello re-registers only when it brings a
@@ -193,7 +197,8 @@ class DeviceBroker:
         def handler(args=None, **kwargs):
             # The keywords are the dispatcher's context (task_id, session_id, user_task), never the
             # model's arguments: those come as the args dict, or not at all.
-            return self.call(name, args if isinstance(args, dict) else {}, kwargs.get("session_id"))
+            return self.call(name, args if isinstance(args, dict) else {},
+                             _run_start_session() or kwargs.get("session_id"))
 
         return handler
 
@@ -203,7 +208,9 @@ class DeviceBroker:
         loop = self._loop
         if loop is None or not session_id:
             return _error(NO_CONSOLE)
-        future = asyncio.run_coroutine_threadsafe(self._send_call(name, args, session_id), loop)
+        # The lineage read may touch the session DB, so it runs here, off the gateway loop.
+        sessions = frozenset(_lineage(session_id))
+        future = asyncio.run_coroutine_threadsafe(self._send_call(name, args, sessions), loop)
         try:
             # The coroutine enforces CALL_TIMEOUT itself; this outer bound only guards a stalled loop.
             return future.result(CALL_TIMEOUT + 5.0)
@@ -211,8 +218,8 @@ class DeviceBroker:
             future.cancel()
             return _error("the console did not answer within %d s" % CALL_TIMEOUT)
 
-    async def _send_call(self, name, args, session_id):
-        ws = self._console_in(session_id)
+    async def _send_call(self, name, args, sessions):
+        ws = self._console_in(sessions)
         if ws is None:
             return _error(NO_CONSOLE)
         call_id = uuid.uuid4().hex
@@ -228,10 +235,10 @@ class DeviceBroker:
         finally:
             self._pending.pop(call_id, None)
 
-    def _console_in(self, session_id):
-        """The live socket with the newest claim of session_id, or None."""
+    def _console_in(self, sessions):
+        """The live socket with the newest claim of any of sessions, or None."""
         claims = [(order, ws) for ws, (claimed, order) in self._claims.items()
-                  if claimed == session_id and not ws.closed]
+                  if claimed in sessions and not ws.closed]
         return max(claims, key=lambda claim: claim[0])[1] if claims else None
 
     def _on_frame(self, ws, text):
@@ -263,6 +270,38 @@ class DeviceBroker:
         else:
             result = frame.get("result", "")
             answer.set_result(result if isinstance(result, str) else json.dumps(result))
+
+
+def _run_start_session():
+    """The session the calling run started in, or "" outside a Hermes run. A compression in the
+    middle of a turn leaves it as it was, and a subagent inherits it."""
+    try:
+        from gateway.session_context import get_session_env
+    except ImportError:
+        return ""
+    return get_session_env("HERMES_SESSION_CHAT_ID", "")
+
+
+def _lineage(session_id):
+    """session_id and the sessions in its compression lineage. Just session_id when the session DB
+    cannot say."""
+    try:
+        lineage = _session_db_lineage(session_id)
+    except Exception:
+        logger.debug("device_tools: no lineage for %s", session_id, exc_info=True)
+        return [session_id]
+    return [session_id, *lineage]
+
+
+def _session_db_lineage(session_id):
+    """The compression ancestors through the tip, from the profile's session DB."""
+    from hermes_state_registry import acquire, release
+
+    db = acquire()
+    try:
+        return db.get_compression_lineage(session_id)
+    finally:
+        release(db)
 
 
 def _error(message):

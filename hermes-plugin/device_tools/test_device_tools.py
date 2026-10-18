@@ -608,3 +608,63 @@ def test_call_without_an_args_dict_sends_empty_args_not_the_context():
             await client.close()
 
     run(scenario())
+
+
+def test_lineage_routes_a_compression_tip_to_the_console_that_claimed_its_root(monkeypatch):
+    monkeypatch.setattr(device_tools, "_lineage", lambda sid: ["s1", "s1-tip"] if sid == "s1-tip" else [sid])
+
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            pending = asyncio.ensure_future(in_worker(ctx.tools["list_apps"]["handler"], {}, "s1-tip"))
+            await answer_one(a, "from a")
+            assert (await pending)[0] == "from a"
+            await a.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_chat_id_routes_a_subagent_call_to_the_parent_run_console(monkeypatch):
+    monkeypatch.setattr(device_tools, "_run_start_session", lambda: "s1")
+
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            pending = asyncio.ensure_future(in_worker(ctx.tools["list_apps"]["handler"], {}, "child-1"))
+            await answer_one(a, "from a")
+            assert (await pending)[0] == "from a"
+            await a.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_lineage_lookup_that_fails_matches_the_exact_id_only(monkeypatch):
+    def broken(sid):
+        raise RuntimeError("session db is gone")
+
+    monkeypatch.setattr(device_tools, "_session_db_lineage", broken)
+
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            handler = ctx.tools["list_apps"]["handler"]
+            pending = asyncio.ensure_future(in_worker(handler, {}, "s1"))
+            await answer_one(a, "from a")
+            assert (await pending)[0] == "from a"
+            result, _ = await in_worker(handler, {}, "s1-tip")
+            assert json.loads(result) == {"error": device_tools.NO_CONSOLE}
+            await a.close()
+        finally:
+            await client.close()
+
+    run(scenario())
