@@ -10,6 +10,9 @@
   scripts/hermes-plugin.sh beside render_artifact.
 - The console keeps one socket to the gateway for device tool calls, with a
   ping every 30 s and a reconnect that backs off until the gateway accepts it.
+- A sample console persona, hermes-profile/SOUL.example.md, with the spoken
+  output rules the console needs: no MEDIA: lines, and long or structured
+  content through render_artifact.
 
 ### Changed
 

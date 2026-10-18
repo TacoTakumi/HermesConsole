@@ -92,6 +92,13 @@ out of your other Hermes sessions.
 3. Write the console's persona to `SOUL.md` in the profile home. The gateway
    reads it at start. Keep replies short and spoken: the console reads them
    aloud, and anything long belongs on its display through `render_artifact`.
+   `hermes-profile/SOUL.example.md` is a starting point. Copy it and change
+   the name and the voice as you like:
+
+       scp hermes-profile/SOUL.example.md you@gateway:.hermes/profiles/console/SOUL.md
+
+   Keep its "Spoken output constraints" section. The console never renders
+   `MEDIA:` lines, and the gateway's own prompt asks the model for them.
 
 4. Install the two plugins in the profile with `scripts/hermes-plugin.sh`. It
    copies them to the profile's `plugins/` directory, adds them to
