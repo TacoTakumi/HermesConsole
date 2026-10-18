@@ -44,6 +44,7 @@ interface OneShotSink : AutoCloseable {
 class AudioTrackOneShotSink(
     private val audioManager: AudioManager,
     private val config: AudioConfig = AudioConfig(),
+    private val gain: OutputGain = OutputGain(),
 ) : OneShotSink {
 
     override fun play(pcm: ByteArray, sampleRateHz: Int) {
@@ -68,6 +69,8 @@ class AudioTrackOneShotSink(
             .build()
         try {
             audioManager.preferredOutputDevice(config)?.let(track::setPreferredDevice)
+            // A track per clip, so the shared gain is read fresh for every play.
+            track.setVolume(gain.value)
             // Load the whole clip, then play it as one unit - no second write, nothing to run dry.
             track.write(pcm, 0, pcm.size)
             track.play()

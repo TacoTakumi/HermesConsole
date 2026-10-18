@@ -18,6 +18,7 @@ class AudioTrackSink(
     // USAGE_VOICE_COMMUNICATION puts playback on the comm path so the hardware AEC references it
     // (docs/aec-spike.md "The tenth"); USAGE_ASSISTANT is the pre-OTA media-path default.
     usage: Int = AudioAttributes.USAGE_ASSISTANT,
+    private val gain: OutputGain = OutputGain(),
 ) : AudioSink {
 
     private val track: AudioTrack = AudioTrack.Builder()
@@ -47,8 +48,17 @@ class AudioTrackSink(
 
     private val latencyEstimator = OutputLatencyEstimator()
 
+    /** The gain last set on the track; a new track plays at unity until the first write. */
+    private var appliedGain = 1f
+
     /** Blocking write: the device's own consumption rate is the backpressure. */
     override fun write(pcm: ByteArray) {
+        // Read the shared gain per write, so a level change reaches a reply already playing.
+        val level = gain.value
+        if (level != appliedGain) {
+            track.setVolume(level)
+            appliedGain = level
+        }
         val written = track.write(pcm, 0, pcm.size)
         // AudioTrack's byte[] write returns BYTES accepted, but the latency math and getTimestamp's
         // framePosition are both in FRAMES; 16-bit mono is 2 bytes per frame, so halve before
@@ -130,10 +140,11 @@ class AudioTrackSink(
 class AudioTrackSinkFactory(
     private val audioManager: AudioManager,
     private val config: AudioConfig = AudioConfig(),
+    private val gain: OutputGain = OutputGain(),
 ) : AudioSinkFactory {
 
     override fun create(sampleRateHz: Int): AudioSink =
-        AudioTrackSink(sampleRateHz, preferredOutputDevice(), playbackUsage())
+        AudioTrackSink(sampleRateHz, preferredOutputDevice(), playbackUsage(), gain)
 
     // Communication-path playback when the AEC needs a downlink reference (see AudioConfig).
     private fun playbackUsage(): Int =
