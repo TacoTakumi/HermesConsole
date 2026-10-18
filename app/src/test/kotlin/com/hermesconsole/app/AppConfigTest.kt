@@ -132,6 +132,29 @@ class AppConfigTest {
         assertEquals(150, reopened.screensaverTimeoutSeconds, "and so does the screensaver's")
     }
 
+    @Test
+    fun `a store without the voice volume reads full volume`() = runBlocking {
+        // Every console upgraded from a build without the setting must keep speaking at its old level.
+        assertEquals(100, storeIn(scope()).read().voiceVolumePercent)
+    }
+
+    @Test
+    fun `a written voice volume reads back`() = runBlocking {
+        val store = storeIn(scope())
+        store.saveVoiceVolume(40)
+        assertEquals(40, store.read().voiceVolumePercent)
+    }
+
+    @Test
+    fun `a settings save leaves the voice volume alone`() = runBlocking {
+        // The settings screen does not show the voice volume, so what it saves carries the default.
+        // A SAVE there must not turn the console back up to full.
+        val store = storeIn(scope())
+        store.saveVoiceVolume(40)
+        store.save(everything)
+        assertEquals(40, store.read().voiceVolumePercent)
+    }
+
     // -- key discipline (REQ-28) ----------------------------------------------------------------
 
     @Test

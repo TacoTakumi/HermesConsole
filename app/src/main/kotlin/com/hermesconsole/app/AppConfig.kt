@@ -50,6 +50,12 @@ data class BackendSettings(
      * visible from across the room rather than happening behind a screen already dark.
      */
     val screensaverTimeoutSeconds: Int = DEFAULT_SCREENSAVER_TIMEOUT_SECONDS,
+    /**
+     * The console's own playback level, 0..100: speech, announcements and cues, apart from the
+     * device's media volume. Set by voice, not on the settings screen, so [SettingsStore.save]
+     * leaves it alone and [SettingsStore.saveVoiceVolume] writes it.
+     */
+    val voiceVolumePercent: Int = DEFAULT_VOICE_VOLUME_PERCENT,
 ) {
 
     /**
@@ -87,7 +93,8 @@ data class BackendSettings(
     override fun toString(): String =
         "BackendSettings(hermes=$hermesHost:$hermesPort key=${hermesKey.presence()}, " +
             "vm=$vmHost:$vmPort key=${vmKey.presence()}, followUp=${followUpWindowSeconds}s, " +
-            "session=${sessionTimeoutSeconds}s, screensaver=${screensaverTimeoutSeconds}s)"
+            "session=${sessionTimeoutSeconds}s, screensaver=${screensaverTimeoutSeconds}s, " +
+            "voice=$voiceVolumePercent%)"
 
     private fun String.presence() = if (isBlank()) "unset" else "set"
 
@@ -116,6 +123,9 @@ data class BackendSettings(
          */
         const val DEFAULT_SESSION_TIMEOUT_SECONDS = 300
         const val DEFAULT_SCREENSAVER_TIMEOUT_SECONDS = 420
+
+        /** Full volume: a console that never had the setting keeps speaking at its old level. */
+        const val DEFAULT_VOICE_VOLUME_PERCENT = 100
 
         private val VALID_PORTS = 1..65_535
     }
@@ -184,6 +194,8 @@ class SettingsStore(private val store: DataStore<Preferences>) {
                 ?: BackendSettings.DEFAULT_SESSION_TIMEOUT_SECONDS,
             screensaverTimeoutSeconds = prefs[SCREENSAVER_TIMEOUT_S]
                 ?: BackendSettings.DEFAULT_SCREENSAVER_TIMEOUT_SECONDS,
+            voiceVolumePercent = prefs[VOICE_VOLUME_PERCENT]
+                ?: BackendSettings.DEFAULT_VOICE_VOLUME_PERCENT,
         )
     }
 
@@ -201,7 +213,14 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             prefs[FOLLOW_UP_WINDOW_S] = settings.followUpWindowSeconds
             prefs[SESSION_TIMEOUT_S] = settings.sessionTimeoutSeconds
             prefs[SCREENSAVER_TIMEOUT_S] = settings.screensaverTimeoutSeconds
+            // Not the voice volume: the settings screen saves without it, and a SAVE there must not
+            // reset what was set by voice.
         }
+    }
+
+    /** The console's own playback level, 0..100, as set by voice. */
+    suspend fun saveVoiceVolume(percent: Int) {
+        store.edit { prefs -> prefs[VOICE_VOLUME_PERCENT] = percent }
     }
 
     private companion object {
@@ -214,6 +233,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val FOLLOW_UP_WINDOW_S = intPreferencesKey("follow_up_window_s")
         val SESSION_TIMEOUT_S = intPreferencesKey("session_timeout_s")
         val SCREENSAVER_TIMEOUT_S = intPreferencesKey("screensaver_timeout_s")
+        val VOICE_VOLUME_PERCENT = intPreferencesKey("voice_volume_percent")
     }
 }
 
