@@ -3,6 +3,8 @@ package com.hermesconsole.app.devicetools
 import android.media.AudioManager
 import android.util.Log
 import com.hermesconsole.hermesclient.DeviceTool
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -94,12 +96,13 @@ fun volumeTools(
     ) { args ->
         val target = args.stringArg("target")
         require(target == MEDIA || target == VOICE) { "target must be '$MEDIA' or '$VOICE', not '$target'" }
-        val percent = args["percent"]?.let { element ->
+        // Some models send every optional field, with null for the ones they do not use.
+        val percent = args.given("percent")?.let { element ->
             val value = runCatching { element.jsonPrimitive.doubleOrNull }.getOrNull()
                 ?: throw IllegalArgumentException("percent must be a number from 0 to 100")
             value.roundToInt().also { require(it in 0..100) { "percent must be from 0 to 100, not $it" } }
         }
-        val direction = args["direction"]?.let { args.stringArg("direction") }
+        val direction = args.given("direction")?.let { args.stringArg("direction") }
         require((percent == null) != (direction == null)) { "give exactly one of percent or direction" }
         require(direction == null || direction == UP || direction == DOWN) {
             "direction must be '$UP' or '$DOWN', not '$direction'"
@@ -142,6 +145,9 @@ private const val STEP = 10
 
 /** The lowest voice level: low enough to be quiet, high enough to hear the console say how to turn it up. */
 const val VOICE_FLOOR_PERCENT = 10
+
+/** The argument, or null when it is left out or sent as JSON null. */
+private fun JsonObject.given(key: String): JsonElement? = this[key]?.takeIf { it !is JsonNull }
 
 private fun JsonObject.stringArg(key: String): String =
     runCatching { this[key]?.jsonPrimitive?.content }.getOrNull().orEmpty()

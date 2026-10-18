@@ -4,6 +4,7 @@ import com.hermesconsole.hermesclient.DeviceTool
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
@@ -89,6 +90,27 @@ class VolumeToolsTest {
         refused(mediaTarget, direction("sideways"))
         refused(mediaTarget, percent(101))
         refused(voiceTarget, percent(-1))
+    }
+
+    @Test
+    fun `a null percent counts as left out`() {
+        // Some models send every optional field, with null for the ones they do not use.
+        media.index = 9
+        val result = set(mediaTarget, "percent" to JsonNull, direction("down"))
+        assertEquals(8, media.index)
+        assertEquals(53, result.int("percent"))
+    }
+
+    @Test
+    fun `a null direction counts as left out`() {
+        val result = set(voiceTarget, percent(40), "direction" to JsonNull)
+        assertEquals(40, voice)
+        assertEquals(40, result.int("percent"))
+    }
+
+    @Test
+    fun `both null is still neither`() {
+        refused(mediaTarget, "percent" to JsonNull, "direction" to JsonNull)
     }
 
     // -- get_volume -----------------------------------------------------------------------------
