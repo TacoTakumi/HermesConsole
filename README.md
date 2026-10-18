@@ -127,6 +127,12 @@ out of your other Hermes sessions.
      Several consoles can share the profile: a tool call goes to the console
      that shows the conversation that made it.
 
+     If the console profile has a `console-audio-control` skill, delete it.
+     Hermes can write this skill by itself, and the model then follows it
+     instead of calling `set_volume`:
+
+         ssh you@gateway 'rm -r .hermes/profiles/console/skills/devops/console-audio-control'
+
    `HERMES_HOME_DIR` is relative to the gateway user's home. The script stops
    when `HERMES_HOME_DIR`, `HERMES_SERVICE` or `HERMES_URL` is not set. All
    three must name the same profile: the script then never installs the
