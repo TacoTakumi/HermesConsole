@@ -61,11 +61,13 @@ class FakeCtx:
         self.unloads.append(callback)
 
     def unload(self):
-        # What the plugin manager does on unload: run the callbacks, dispose what it tracked.
-        for callback in reversed(self.unloads):
-            callback()
+        # What the plugin manager does on unload, in its order: dispose the registrations it
+        # tracked when the unload began, then run the unload callbacks. A registration made after
+        # that snapshot is the plugin's own to dispose.
         for name in list(self.tools):
             FakeHandle(self, name).dispose()
+        for callback in reversed(self.unloads):
+            callback()
 
 
 class FakeAdapter:
@@ -437,6 +439,47 @@ def test_unload_on_another_thread_during_registration_leaves_nothing_registered(
                 msg = await ws.receive(timeout=3)
             assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
             assert ctx.tools == {}
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_call_result_with_a_non_string_id_is_ignored_and_the_socket_stays_open():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            pending = asyncio.ensure_future(in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"}))
+            frame = await ws.receive_json(timeout=2)
+            await ws.send_json({"type": "result", "id": ["not", "a", "string"], "result": "junk"})
+            await ws.send_json({"type": "result", "id": frame["id"], "result": "Launched X"})
+            result, _ = await pending
+            assert result == "Launched X"
+            assert not ws.closed
+            await ws.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_call_without_an_args_dict_sends_empty_args_not_the_context():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            handler = ctx.tools["list_apps"]["handler"]
+            loop = asyncio.get_running_loop()
+            pending = loop.run_in_executor(
+                None, lambda: handler(task_id="t1", session_id="s1", user_task="open the calculator"))
+            frame = await ws.receive_json(timeout=2)
+            assert frame["args"] == {}
+            await ws.send_json({"type": "result", "id": frame["id"], "result": "Calculator"})
+            assert await pending == "Calculator"
+            await ws.close()
         finally:
             await client.close()
 

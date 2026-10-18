@@ -175,9 +175,9 @@ class DeviceBroker:
 
     def _handler_for(self, name):
         def handler(args=None, **kwargs):
-            # The tool call layer passes a dict or bare keywords; accept both.
-            a = args if isinstance(args, dict) else {k: v for k, v in kwargs.items() if k != "task_id"}
-            return self.call(name, a)
+            # The keywords are the dispatcher's context (task_id, session_id, user_task), never the
+            # model's arguments: those come as the args dict, or not at all.
+            return self.call(name, args if isinstance(args, dict) else {})
 
         return handler
 
@@ -219,7 +219,10 @@ class DeviceBroker:
             return
         if not isinstance(frame, dict) or frame.get("type") != "result":
             return
-        owner, answer = self._pending.get(frame.get("id"), (None, None))
+        call_id = frame.get("id")
+        if not isinstance(call_id, str):
+            return
+        owner, answer = self._pending.get(call_id, (None, None))
         if owner is not ws or answer.done():
             return
         if "error" in frame:
