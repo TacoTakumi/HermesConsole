@@ -10,12 +10,15 @@ Wire frames, JSON text:
 
     console -> {"type": "hello", "tools": [{"name", "description", "parameters"}]}
     plugin  -> {"type": "ready"}
+    console -> {"type": "session", "id": "<session id>" | null}
     plugin  -> {"type": "call", "id": "<id>", "tool": "<name>", "args": {...}}
     console -> {"type": "result", "id": "<id>", "result": "<text>"}
     console -> {"type": "result", "id": "<id>", "error": "<text>"}
 
 Several consoles can share the profile. Each keeps its own socket, and no hello closes another
-console's socket.
+console's socket. A console claims the session it shows with a session frame, after its ready and
+on every change. A call goes to the console that claimed the calling run's session, the newest
+claim first, and to no other console: with no claim the call fails.
 
 The tools stay registered when the socket closes. Every register or dispose bumps the registry
 generation, which rebuilds cached agents and makes an open conversation process its whole history
@@ -29,6 +32,7 @@ and the route always serves the latest load's broker.
 
 import asyncio
 import concurrent.futures
+import itertools
 import json
 import logging
 import sys
@@ -49,6 +53,9 @@ HELLO_TIMEOUT = 10.0
 # worker, so the plugin keeps its own, short deadline: a voice turn cannot wait long.
 CALL_TIMEOUT = 10.0
 
+# The tool error for a call whose session no live console claimed.
+NO_CONSOLE = "no console is in this conversation"
+
 
 class DeviceBroker:
     """The consoles' sockets, the tools they declared, and the calls waiting on them."""
@@ -58,6 +65,9 @@ class DeviceBroker:
         self._loop = None
         # Live console sockets, oldest hello first.
         self._sockets = []
+        # Socket -> (session id it claimed, claim order). Touched on the gateway loop only.
+        self._claims = {}
+        self._claim_order = itertools.count()
         # Call id -> (socket it went down, future for its answer). Touched on the gateway loop only.
         self._pending = {}
         self._handles = {}
@@ -149,6 +159,7 @@ class DeviceBroker:
             with self._lock:
                 if ws in self._sockets:
                     self._sockets.remove(ws)
+            self._claims.pop(ws, None)
             for owner, answer in list(self._pending.values()):
                 if owner is ws and not answer.done():
                     answer.set_exception(ConnectionError("socket closed"))
@@ -182,16 +193,17 @@ class DeviceBroker:
         def handler(args=None, **kwargs):
             # The keywords are the dispatcher's context (task_id, session_id, user_task), never the
             # model's arguments: those come as the args dict, or not at all.
-            return self.call(name, args if isinstance(args, dict) else {})
+            return self.call(name, args if isinstance(args, dict) else {}, kwargs.get("session_id"))
 
         return handler
 
-    def call(self, name, args):
-        """Run one tool on the console. Called on a Hermes worker thread; blocks until the answer."""
-        loop, ws = self._loop, self._newest()
-        if loop is None or ws is None:
-            return _error("the console is not connected")
-        future = asyncio.run_coroutine_threadsafe(self._send_call(name, args), loop)
+    def call(self, name, args, session_id):
+        """Run one tool on the console in session_id. Called on a Hermes worker thread; blocks until
+        the answer."""
+        loop = self._loop
+        if loop is None or not session_id:
+            return _error(NO_CONSOLE)
+        future = asyncio.run_coroutine_threadsafe(self._send_call(name, args, session_id), loop)
         try:
             # The coroutine enforces CALL_TIMEOUT itself; this outer bound only guards a stalled loop.
             return future.result(CALL_TIMEOUT + 5.0)
@@ -199,10 +211,10 @@ class DeviceBroker:
             future.cancel()
             return _error("the console did not answer within %d s" % CALL_TIMEOUT)
 
-    async def _send_call(self, name, args):
-        ws = self._newest()
+    async def _send_call(self, name, args, session_id):
+        ws = self._console_in(session_id)
         if ws is None:
-            return _error("the console is not connected")
+            return _error(NO_CONSOLE)
         call_id = uuid.uuid4().hex
         answer = asyncio.get_running_loop().create_future()
         self._pending[call_id] = (ws, answer)
@@ -216,18 +228,29 @@ class DeviceBroker:
         finally:
             self._pending.pop(call_id, None)
 
-    def _newest(self):
-        """The live socket of the newest hello, or None."""
-        live = [ws for ws in self._sockets if not ws.closed]
-        return live[-1] if live else None
+    def _console_in(self, session_id):
+        """The live socket with the newest claim of session_id, or None."""
+        claims = [(order, ws) for ws, (claimed, order) in self._claims.items()
+                  if claimed == session_id and not ws.closed]
+        return max(claims, key=lambda claim: claim[0])[1] if claims else None
 
     def _on_frame(self, ws, text):
-        """Settle the waiting call a result frame answers. Anything else is dropped."""
+        """Record a session claim, or settle the waiting call a result frame answers. Anything else is
+        dropped."""
         try:
             frame = json.loads(text)
         except ValueError:
             return
-        if not isinstance(frame, dict) or frame.get("type") != "result":
+        if not isinstance(frame, dict):
+            return
+        if frame.get("type") == "session":
+            session_id = frame.get("id")
+            if isinstance(session_id, str) and session_id:
+                self._claims[ws] = (session_id, next(self._claim_order))
+            elif session_id is None:
+                self._claims.pop(ws, None)
+            return
+        if frame.get("type") != "result":
             return
         call_id = frame.get("id")
         if not isinstance(call_id, str):

@@ -5,6 +5,7 @@ Run from the repo root: python3 -m pytest hermes-plugin/device_tools/test_device
 
 import asyncio
 import importlib.util
+import json
 import sys
 import threading
 from pathlib import Path
@@ -90,11 +91,19 @@ async def start(ctx):
     return client
 
 
-async def hello(client, tools=TOOLS):
+async def hello(client, tools=TOOLS, session="s1"):
+    """A console that got ready and, unless session is None, claimed that session."""
     ws = await client.ws_connect(device_tools.ROUTE, headers=AUTH)
     await ws.send_json({"type": "hello", "tools": tools})
     assert await ws.receive_json(timeout=2) == {"type": "ready"}
+    if session is not None:
+        await claim(ws, session)
     return ws
+
+
+async def claim(ws, session):
+    await ws.send_json({"type": "session", "id": session})
+    await settle()
 
 
 async def settle():
@@ -242,12 +251,110 @@ def broker_of(ctx):
     return sys.modules[device_tools.STATE_MODULE].broker
 
 
-async def in_worker(handler, args):
-    # Hermes runs tool handlers on a worker thread, never on the gateway loop.
+async def in_worker(handler, args, session_id="s1"):
+    # Hermes runs tool handlers on a worker thread, never on the gateway loop, and passes the run's
+    # context as keywords.
     loop = asyncio.get_running_loop()
     started = loop.time()
-    result = await loop.run_in_executor(None, handler, args)
+    result = await loop.run_in_executor(None, lambda: handler(args, task_id=session_id, session_id=session_id))
     return result, loop.time() - started
+
+
+async def answer_one(ws, result):
+    """Answer the next call frame on ws with result."""
+    frame = await ws.receive_json(timeout=2)
+    assert frame["type"] == "call"
+    await ws.send_json({"type": "result", "id": frame["id"], "result": result})
+
+
+async def no_frame(ws):
+    with pytest.raises(asyncio.TimeoutError):
+        await ws.receive(timeout=0.3)
+
+
+def test_claim_routes_a_call_only_to_the_console_in_that_session():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            b = await hello(client, session="s2")
+            pending = asyncio.ensure_future(in_worker(ctx.tools["list_apps"]["handler"], {}, "s2"))
+            await answer_one(b, "from b")
+            assert (await pending)[0] == "from b"
+            await no_frame(a)
+            await a.close()
+            await b.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_claim_newest_wins_and_the_older_takes_over_when_it_leaves():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            b = await hello(client, session="s1")
+            handler = ctx.tools["list_apps"]["handler"]
+            pending = asyncio.ensure_future(in_worker(handler, {}))
+            await answer_one(b, "from b")
+            assert (await pending)[0] == "from b"
+            await no_frame(a)
+
+            await b.close()
+            await settle()
+            pending = asyncio.ensure_future(in_worker(handler, {}))
+            await answer_one(a, "from a")
+            assert (await pending)[0] == "from a"
+            await a.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_claim_moved_to_another_session_gives_the_old_one_up():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            a = await hello(client, session="s1")
+            b = await hello(client, session="s1")
+            await claim(b, "s2")
+            pending = asyncio.ensure_future(in_worker(ctx.tools["list_apps"]["handler"], {}))
+            await answer_one(a, "from a")
+            assert (await pending)[0] == "from a"
+            await no_frame(b)
+            await a.close()
+            await b.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_claim_missing_returns_an_error_and_sends_no_call():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client, session="s1")
+            result, elapsed = await in_worker(ctx.tools["list_apps"]["handler"], {}, "s9")
+            assert json.loads(result) == {"error": device_tools.NO_CONSOLE}
+            assert elapsed < 1.0
+            await no_frame(ws)
+
+            await claim(ws, None)
+            result, _ = await in_worker(ctx.tools["list_apps"]["handler"], {})
+            assert json.loads(result) == {"error": device_tools.NO_CONSOLE}
+            await ws.close()
+        finally:
+            await client.close()
+
+    run(scenario())
 
 
 def test_not_connected_call_returns_an_error_at_once():
@@ -258,7 +365,7 @@ def test_not_connected_call_returns_an_error_at_once():
             await (await hello(client)).close()
             await settle()
             result, elapsed = await in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"})
-            assert "not connected" in result
+            assert json.loads(result) == {"error": device_tools.NO_CONSOLE}
             assert elapsed < 1.0
         finally:
             await client.close()
