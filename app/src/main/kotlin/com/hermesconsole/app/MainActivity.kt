@@ -25,6 +25,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.CompositionLocalProvider
 import com.hermesconsole.app.artifacts.ArtifactRouter
+import com.hermesconsole.app.devicetools.appTools
+import com.hermesconsole.app.devicetools.launcherApps
 import com.hermesconsole.app.tools.ToolActivityRouter
 import com.hermesconsole.app.tools.ToolLine
 import com.hermesconsole.app.tools.linesForSession
@@ -38,6 +40,8 @@ import com.hermesconsole.audio.NativeSoftwareAec
 import com.hermesconsole.audio.OneShotSink
 import com.hermesconsole.audio.SoftwareAec
 import com.hermesconsole.audio.TtsPlayer
+import com.hermesconsole.hermesclient.DeviceTool
+import com.hermesconsole.hermesclient.DeviceToolLink
 import com.hermesconsole.hermesclient.HermesClient
 import com.hermesconsole.hermesclient.HermesMessage
 import com.hermesconsole.hermesclient.HermesSession
@@ -453,6 +457,12 @@ class MainActivity : ComponentActivity() {
             // failure record is what says so.
             aecFactory = { runCatching { NativeSoftwareAec.create() }.getOrNull() },
             journal = BargeInJournal(bargeInRecords),
+            // The console is HOME, so it may start activities even with another app in front.
+            deviceTools = appTools(
+                resolved = { packageManager.launcherApps() },
+                selfPackage = packageName,
+                launch = { app -> withContext(Dispatchers.Main) { startActivity(app.launchIntent()) } },
+            ),
             scope = lifecycleScope,
         )
         withContext(Dispatchers.IO) {
@@ -579,11 +589,17 @@ internal class WallConsole(
      * diagnostic, and the voice loop must run identically without one.
      */
     private val journal: BargeInJournal? = null,
+    /**
+     * The tools the model may run on the tablet itself, over the device socket to the gateway.
+     * Empty - the assembly tests that do not exercise them - opens no socket.
+     */
+    private val deviceTools: List<DeviceTool> = emptyList(),
     private val scope: CoroutineScope,
 ) : AutoCloseable {
 
     private val voice = VoiceManagerClient(backends.voice)
     private val hermes = HermesClient(backends.hermes)
+    private val deviceLink = DeviceToolLink(backends.hermes, deviceTools)
 
     /**
      * The approval desk (T-27, REQ-14): raised off the loop's event tap, answered by touch on the
@@ -741,6 +757,7 @@ internal class WallConsole(
     fun start() {
         loop.start()
         voice.connect()
+        if (deviceTools.isNotEmpty()) deviceLink.connect()
         health.start()
         // The pane opens on the wake itself (T-06, REQ-04): leaving READY with nothing entered
         // is a visit beginning, and the wall shows its empty pane before the utterance is done -
@@ -801,6 +818,7 @@ internal class WallConsole(
         // The loop owns capture and wake and closes them; the clients are ours to shut down.
         loop.close()
         voice.shutdown()
+        deviceLink.close()
         announcementSink?.close()
     }
 

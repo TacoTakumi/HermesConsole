@@ -1,5 +1,6 @@
 package com.hermesconsole.app
 
+import com.hermesconsole.app.devicetools.appTools
 import com.hermesconsole.audio.AudioCapture
 import com.hermesconsole.audio.AudioConfig
 import com.hermesconsole.audio.AudioSink
@@ -11,12 +12,20 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -74,6 +83,32 @@ class WallConsoleAssemblyTest {
 
     /** The stream: each event's data line, then the blank line that terminates it on the wire. */
     private fun sse(vararg events: String) = events.joinToString(separator = "") { "$it\n" }
+
+    // -- the gateway's device socket ------------------------------------------------------------
+
+    /** Each text frame the console sent on its device socket, and whether that socket closed. */
+    private val deviceFrames = Channel<String>(Channel.UNLIMITED)
+    private val deviceClosed = Channel<Unit>(Channel.UNLIMITED)
+
+    private val deviceGateway = object : WebSocketListener() {
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            deviceFrames.trySend(text)
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+            deviceClosed.trySend(Unit)
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            deviceClosed.trySend(Unit)
+        }
+    }
+
+    private val deviceTools = appTools(resolved = { emptyList() }, selfPackage = "com.hermesconsole", launch = {})
+
+    /** A test that closes the console itself; teardown must not close it twice. */
+    private var closedByTest = false
 
     private lateinit var hermes: MockWebServer
     private lateinit var scope: CoroutineScope
@@ -136,6 +171,8 @@ class WallConsoleAssemblyTest {
                             .setHeader("Content-Type", "application/json")
                             .setBody("""{"providers":[],"model":"Qwen3.6-27B-MTP-Q8","provider":"custom:llamacpp"}""")
 
+                    path == "/v1/device/ws" -> MockResponse().withWebSocketUpgrade(deviceGateway)
+
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -157,6 +194,7 @@ class WallConsoleAssemblyTest {
             capture = NoCapture(),
             wake = NoWake(),
             followUpWindowMillis = { 0L },
+            deviceTools = deviceTools,
             scope = scope,
         )
         console.start()
@@ -164,7 +202,7 @@ class WallConsoleAssemblyTest {
 
     @AfterEach
     fun tearDown() {
-        console.close()
+        if (!closedByTest) console.close()
         scope.cancel()
         hermes.shutdown()
     }
@@ -186,6 +224,22 @@ class WallConsoleAssemblyTest {
             // had ever produced one.
             val panes = withTimeout(10_000) { console.panes.first { it.isNotEmpty() } }
             assertEquals(listOf("image"), panes.map { it.title })
+        }
+
+    @Test
+    fun `the console opens its device socket with both app tools and closes it with itself`(): Unit =
+        runBlocking {
+            val hello = withTimeout(10_000) { Json.parseToJsonElement(deviceFrames.receive()).jsonObject }
+            assertEquals("hello", hello["type"]!!.jsonPrimitive.content)
+            assertEquals(
+                listOf("list_apps", "launch_app"),
+                hello["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
+            )
+
+            closedByTest = true
+            console.close()
+
+            withTimeout(10_000) { deviceClosed.receive() }
         }
 
     @Test
