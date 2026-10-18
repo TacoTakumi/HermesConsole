@@ -111,10 +111,15 @@ out of your other Hermes sessions.
      (`list_apps` and `launch_app`) appear in this profile only.
 
    `HERMES_HOME_DIR` is relative to the gateway user's home. The script stops
-   when `HERMES_HOME_DIR` or `HERMES_SERVICE` is not set, so it never installs
-   the device tools in your default profile by mistake. The script reads
-   the key from `HERMES_KEY_FILE` (default `~/.hermes/api_server.env`, a
-   `KEY=` line) for its live check.
+   when `HERMES_HOME_DIR`, `HERMES_SERVICE` or `HERMES_URL` is not set. All
+   three must name the same profile: the script then never installs the
+   device tools in your default profile by mistake, and never checks a
+   different gateway from the one it deployed.
+
+   For its live check the script reads the key from `HERMES_KEY_FILE`
+   (default `~/.hermes/api_server.env`, a `KEY=` line). That key must be the
+   console profile's `API_SERVER_KEY` from step 2. With another profile's
+   key, the check fails with 401.
 
 ## Gateway changes
 
