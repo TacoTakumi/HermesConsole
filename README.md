@@ -130,6 +130,14 @@ out of your other Hermes sessions.
    console profile's `API_SERVER_KEY` from step 2. With another profile's
    key, the check fails with 401.
 
+5. Keep the device tools always loaded, on the gateway host:
+
+       hermes --profile console config set tools.tool_search.eager_toolsets '[device_tools]'
+
+   Without it, Hermes hides plugin tools behind its tool_search bridge, and
+   each device request costs the model one more turn first. The setting
+   needs the gateway changes below, and takes effect without a restart.
+
 ## Gateway changes
 
 Upstream Hermes does not yet give the console everything it reads off the
@@ -145,6 +153,11 @@ upstream `main` plus these commits:
 - The model that served a run, on `run.completed`. The console's MODEL readout
   shows it.
 - Real tool durations on that same path.
+- `tools.tool_search.eager_toolsets`, a list of toolset names whose tools are
+  always sent with full schemas instead of behind the tool_search bridge
+  (a port of NousResearch/hermes-agent#135375). The console profile sets it
+  to `[device_tools]`, so a device tool needs no extra `tool_describe` turn.
+  A tool named in `tools.tool_search.defer` still defers.
 
 To install it, in your hermes-agent checkout:
 

@@ -11,6 +11,10 @@
   from a conversation that no console shows fails with "no console is in this
   conversation". Deploy the plugin and the app together: an older app does not
   say which session it shows, so every device tool call from it fails.
+- The console profile keeps the device tools always loaded
+  (`tools.tool_search.eager_toolsets: [device_tools]`, a new gateway setting).
+  A device request no longer waits for an extra model turn first: on the wall,
+  "open the calculator" reached launch_app in 0.8 s instead of 2.5 s.
 
 ### Fixed
 
