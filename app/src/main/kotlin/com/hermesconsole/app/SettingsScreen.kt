@@ -78,14 +78,14 @@ internal data class SettingsDraft(
         screensaverTimeout = initial.screensaverTimeoutSeconds.toString(),
     )
 
-    /** What SAVE persists, or null while any number in the draft does not parse. */
+    /** What SAVE persists, or null while any number does not parse or a key cannot go in a header. */
     fun toSettings(): BackendSettings? = BackendSettings(
         hermesHost = hermesHost.trim(),
         hermesPort = parsePort(hermesPort.trim()) ?: return null,
-        hermesKey = hermesKey.trim(),
+        hermesKey = hermesKey.trim().takeIf(::isHeaderSafe) ?: return null,
         vmHost = vmHost.trim(),
         vmPort = parsePort(vmPort.trim()) ?: return null,
-        vmKey = vmKey.trim(),
+        vmKey = vmKey.trim().takeIf(::isHeaderSafe) ?: return null,
         followUpWindowSeconds = parseFollowUpWindow(followUpWindow.trim()) ?: return null,
         sessionTimeoutSeconds = parseIdleTimeout(sessionTimeout.trim()) ?: return null,
         screensaverTimeoutSeconds = parseIdleTimeout(screensaverTimeout.trim()) ?: return null,
@@ -271,6 +271,7 @@ private fun BackendColumn(
             onValueChange = onKey,
             keyboardType = KeyboardType.Password,
             secret = true,
+            valid = isHeaderSafe(key.trim()),
         )
     }
 }

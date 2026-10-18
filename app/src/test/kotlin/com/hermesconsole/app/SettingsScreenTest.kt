@@ -82,6 +82,17 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `a key or token that cannot go in a header is not saved`() {
+        // Saved, it would leave the console unconfigured or the voice link AuthFailed with no clue
+        // why; held here, the Tomato border names the field.
+        for (bad in listOf("made-up\nkey", "made-up-\u00e9")) {
+            assertNull(opened.copy(hermesKey = bad).toSettings(), "hermes key")
+            assertNull(opened.copy(vmKey = bad).toSettings(), "voice token")
+        }
+        assertNotNull(opened.copy(hermesKey = "made-up ~key!", vmKey = "vmp_made-up").toSettings())
+    }
+
+    @Test
     fun `a half-configured console still saves - completeness is judged elsewhere`() {
         // The screen persists drafts: somebody setting a console up types the hosts on Monday and
         // finds the keys on Tuesday, and must not lose Monday's work to a validation rule that
