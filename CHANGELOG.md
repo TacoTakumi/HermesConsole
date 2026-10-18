@@ -1,14 +1,21 @@
 # Changelog
 
-## [0.2.1]
+## [0.3.0]
+
+### Changed
+
+- Breaking: several consoles can share one Hermes profile, each with its own
+  device tool socket. Each console tells the device_tools plugin which session
+  it shows, and a device tool call goes only to the console in the calling
+  conversation, also after a context compression or from a subagent. A call
+  from a conversation that no console shows fails with "no console is in this
+  conversation". Deploy the plugin and the app together: an older app does not
+  say which session it shows, so every device tool call from it fails.
 
 ### Fixed
 
-- Two consoles on one Hermes profile no longer take the device tool socket
-  from each other about once a second. The newest console keeps it: the
-  device_tools plugin closes the replaced socket with code 4000, and a console
-  that gets 4000 does not dial again until it starts again. Deploy the plugin
-  and the app together.
+- Two consoles on one profile no longer take the device tool socket from each
+  other about once a second.
 
 ## [0.2.0]
 
