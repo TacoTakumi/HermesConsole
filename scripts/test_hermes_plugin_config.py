@@ -127,3 +127,19 @@ def test_every_enabled_shape_is_read_and_edited_into_valid_yaml(tmp_path, shape)
     if "#" in text:
         assert text.split("#", 1)[1].strip() in path.read_text()
     assert run(tmp_path, "check", *expected).returncode == 0
+
+
+def test_a_column_0_comment_inside_enabled_does_not_hide_later_items(tmp_path):
+    text = "plugins:\n  enabled:\n    - render_artifact\n#    - old_plugin\n    - device_tools\n  disabled: []\n"
+    path = config(tmp_path, text)
+    assert run(tmp_path, "check", "render_artifact", "device_tools").returncode == 0
+    result = run(tmp_path, "enable", "device_tools")
+    assert result.returncode == 0, result.stderr
+    assert "already enabled" in result.stdout
+    assert path.read_text() == text
+    assert not list(path.parent.glob("config.yaml.bak.*"))
+
+
+def test_a_column_0_comment_before_enabled_does_not_hide_the_key(tmp_path):
+    config(tmp_path, "plugins:\n# the console's plugins\n  enabled:\n    - device_tools\n")
+    assert run(tmp_path, "check", "device_tools").returncode == 0

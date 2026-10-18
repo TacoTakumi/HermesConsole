@@ -30,7 +30,8 @@ def enabled_list(lines):
         start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
     except StopIteration:
         return None
-    end = next((j for j in range(start + 1, len(lines)) if re.match(r"^\S", lines[j])), len(lines))
+    # A column-0 comment is not the next top-level key: it can sit inside the block.
+    end = next((j for j in range(start + 1, len(lines)) if re.match(r"^[^\s#]", lines[j])), len(lines))
     try:
         key = next(i for i in range(start + 1, end) if re.match(r"^  enabled:", lines[i]))
     except StopIteration:
