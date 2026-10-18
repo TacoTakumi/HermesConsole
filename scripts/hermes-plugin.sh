@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# Deploys the HermesConsole render_artifact plugin to the Hermes gateway and proves it took.
+# Deploys the HermesConsole plugins (render_artifact, device_tools) to the console's Hermes
+# profile and proves they took.
 #
 # The console's artifacts are tool calls: the model invokes render_artifact with a typed
 # payload (string field kind plus the kind's payload field), the patched /v1/runs stream
 # (see "Gateway changes" in README.md) forwards the args dict whole on tool.started, and the tablet renders
-# the pane client-side. The tool is a Hermes USER PLUGIN at ~/.hermes/plugins/render_artifact
-# on the gateway host - outside the hermes-agent checkout, so a git pull cannot revert it.
-# This script exists for first deploys, edits, and new hosts (T-40, REQ-15/REQ-16).
+# the pane client-side. device_tools adds the socket the console dials in on, and registers the
+# tools the console declares there. Both are Hermes USER PLUGINS under the profile home's
+# plugins/ dir on the gateway host - outside the hermes-agent checkout, so a git pull cannot
+# revert them. This script exists for first deploys, edits, and new hosts (T-40, REQ-15/REQ-16).
 #
-#   ./scripts/hermes-plugin.sh check    is the deployed plugin current and enabled?
-#   ./scripts/hermes-plugin.sh deploy   push the plugin, enable it in config.yaml, restart
+# Every path is under HERMES_HOME_DIR (relative to the gateway user's $HOME): the console's own
+# profile home, so the device tools reach console sessions only. HERMES_SERVICE is the gateway
+# unit that serves that profile, and HERMES_URL its api_server.
+#
+#   ./scripts/hermes-plugin.sh check    are the deployed plugins current and enabled?
+#   ./scripts/hermes-plugin.sh deploy   push the plugins, enable them in config.yaml, restart
 #   ./scripts/hermes-plugin.sh verify   prove it live: a markdown and an image run must each
 #                                       stream a render_artifact tool.started carrying kind
-#                                       and payload
+#                                       and payload, and the device socket route must answer
 #   ./scripts/hermes-plugin.sh all      deploy, then verify
 #
 # The API key is read from HERMES_KEY_FILE and never printed. Do not add set -x, and do not
@@ -21,12 +27,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HERMES_SSH="${HERMES_SSH:?set HERMES_SSH to the gateway host ssh login, e.g. you@gateway}"
+HERMES_HOME_DIR="${HERMES_HOME_DIR:-.hermes}" # relative to the gateway user's $HOME
 HERMES_SERVICE="${HERMES_SERVICE:-hermes-gateway.service}"
 HERMES_URL="${HERMES_URL:-http://127.0.0.1:8642}"
 HERMES_KEY_FILE="${HERMES_KEY_FILE:-$HOME/.hermes/api_server.env}"
 
-PLUGIN_SRC="hermes-plugin/render_artifact"
-PLUGIN_DST=".hermes/plugins/render_artifact" # relative to the gateway user's $HOME
+PLUGINS=(render_artifact device_tools)
 PLUGIN_FILES=(plugin.yaml __init__.py)
 
 # A stable public image for the image-kind probe. The probe asserts the args shape, not this
@@ -34,70 +40,81 @@ PLUGIN_FILES=(plugin.yaml __init__.py)
 PROBE_IMAGE_URL="https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg"
 
 cmd_check() {
-  local f rc=0
-  for f in "${PLUGIN_FILES[@]}"; do
-    if ssh -o BatchMode=yes "$HERMES_SSH" "cat '$PLUGIN_DST/$f'" 2>/dev/null \
-        | diff -q - "$PLUGIN_SRC/$f" >/dev/null 2>&1; then
-      echo "CHECK: $f: deployed copy matches this repo"
-    else
-      echo "CHECK: $f: missing or differs on $HERMES_SSH - run deploy" >&2
-      rc=1
-    fi
+  local plugin f rc=0
+  for plugin in "${PLUGINS[@]}"; do
+    for f in "${PLUGIN_FILES[@]}"; do
+      if ssh -o BatchMode=yes "$HERMES_SSH" "cat '$HERMES_HOME_DIR/plugins/$plugin/$f'" 2>/dev/null \
+          | diff -q - "hermes-plugin/$plugin/$f" >/dev/null 2>&1; then
+        echo "CHECK: $plugin/$f: deployed copy matches this repo"
+      else
+        echo "CHECK: $plugin/$f: missing or differs on $HERMES_SSH - run deploy" >&2
+        rc=1
+      fi
+    done
   done
   # The heredoc is quoted and expanded locally; the remote shell never parses the python.
-  if ssh -o BatchMode=yes "$HERMES_SSH" python3 - <<'PY'
+  ssh -o BatchMode=yes "$HERMES_SSH" python3 - "$HERMES_HOME_DIR" "${PLUGINS[@]}" <<'PY' || rc=1
 import re, sys
 from pathlib import Path
-lines = (Path.home() / ".hermes/config.yaml").read_text().splitlines()
+home, plugins = sys.argv[1], sys.argv[2:]
+lines = (Path.home() / home / "config.yaml").read_text().splitlines()
 try:
     start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
 except StopIteration:
-    sys.exit(1)
+    start = len(lines)
 end = next((j for j in range(start + 1, len(lines)) if re.match(r"^\S", lines[j])), len(lines))
-sys.exit(0 if any(re.match(r"^\s*-\s*render_artifact\s*$", l) for l in lines[start:end]) else 1)
+rc = 0
+for name in plugins:
+    if any(re.match(r"^\s*-\s*%s\s*$" % re.escape(name), l) for l in lines[start:end]):
+        print("CHECK: config.yaml: %s is in plugins.enabled" % name)
+    else:
+        print("CHECK: config.yaml: %s NOT in plugins.enabled - run deploy" % name, file=sys.stderr)
+        rc = 1
+sys.exit(rc)
 PY
-  then
-    echo "CHECK: config.yaml: render_artifact is in plugins.enabled"
-  else
-    echo "CHECK: config.yaml: render_artifact NOT in plugins.enabled - run deploy" >&2
-    rc=1
-  fi
   return "$rc"
 }
 
 cmd_deploy() {
-  local f
-  ssh -o BatchMode=yes "$HERMES_SSH" "mkdir -p '$PLUGIN_DST' && rm -rf '$PLUGIN_DST/__pycache__'"
-  for f in "${PLUGIN_FILES[@]}"; do
-    scp -q "$PLUGIN_SRC/$f" "$HERMES_SSH:$PLUGIN_DST/$f"
-    echo "deploy: $f pushed"
+  local plugin f
+  for plugin in "${PLUGINS[@]}"; do
+    ssh -o BatchMode=yes "$HERMES_SSH" \
+      "mkdir -p '$HERMES_HOME_DIR/plugins/$plugin' && rm -rf '$HERMES_HOME_DIR/plugins/$plugin/__pycache__'"
+    for f in "${PLUGIN_FILES[@]}"; do
+      scp -q "hermes-plugin/$plugin/$f" "$HERMES_SSH:$HERMES_HOME_DIR/plugins/$plugin/$f"
+      echo "deploy: $plugin/$f pushed"
+    done
   done
 
-  # Plugins are opt-in: append render_artifact to plugins.enabled if it is not already there.
-  # Surgical line insert, never a YAML round-trip - config.yaml is the operator's file and its
-  # comments must survive. Timestamped backup first, matching the host's own convention.
-  ssh -o BatchMode=yes "$HERMES_SSH" python3 - <<'PY'
+  # Plugins are opt-in: append each to plugins.enabled if it is not already there. Surgical line
+  # insert, never a YAML round-trip - config.yaml is the operator's file and its comments must
+  # survive. Timestamped backup first, matching the host's own convention.
+  ssh -o BatchMode=yes "$HERMES_SSH" python3 - "$HERMES_HOME_DIR" "${PLUGINS[@]}" <<'PY'
 import re, shutil, sys, time
 from pathlib import Path
-p = Path.home() / ".hermes/config.yaml"
+home, plugins = sys.argv[1], sys.argv[2:]
+p = Path.home() / home / "config.yaml"
 lines = p.read_text().splitlines(keepends=True)
 try:
     start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
 except StopIteration:
-    sys.exit("config: no top-level plugins: block - add render_artifact to plugins.enabled by hand")
+    sys.exit("config: no top-level plugins: block - add %s to plugins.enabled by hand" % ", ".join(plugins))
 end = next((j for j in range(start + 1, len(lines)) if re.match(r"^\S", lines[j])), len(lines))
-if any(re.match(r"^\s*-\s*render_artifact\s*$", l) for l in lines[start:end]):
-    print("config: render_artifact already enabled")
+missing = [n for n in plugins
+           if not any(re.match(r"^\s*-\s*%s\s*$" % re.escape(n), l) for l in lines[start:end])]
+if not missing:
+    print("config: %s already enabled" % ", ".join(plugins))
     sys.exit(0)
 try:
     en = next(i for i in range(start + 1, end) if re.match(r"^  enabled:\s*$", lines[i]))
 except StopIteration:
-    sys.exit("config: no enabled: list under plugins: - add render_artifact by hand")
+    sys.exit("config: no enabled: list under plugins: - add %s by hand" % ", ".join(missing))
 backup = p.with_name("config.yaml.bak." + time.strftime("%Y%m%d_%H%M%S"))
 shutil.copy2(p, backup)
-lines.insert(en + 1, "    - render_artifact\n")
+for name in reversed(missing):
+    lines.insert(en + 1, "    - %s\n" % name)
 p.write_text("".join(lines))
-print("config: enabled render_artifact (backup %s)" % backup.name)
+print("config: enabled %s (backup %s)" % (", ".join(missing), backup.name))
 PY
 
   # Plugins and config are both read at process start, so a restart is required, not a reload.
@@ -165,9 +182,27 @@ sys.exit(0 if ok else 1)
 ' "$kind" "$field"
 }
 
+# The device socket route answers only when device_tools loaded: no key is a 401 from the
+# plugin's own check, and the right key on a plain GET (no WebSocket upgrade) is a 400. A 404
+# means the plugin did not load.
+probe_device_route() {
+  local anon keyed
+  anon=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$HERMES_URL/v1/device/ws")
+  keyed=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+    -H "Authorization: Bearer $HKEY" "$HERMES_URL/v1/device/ws")
+  echo "verify(device): no key -> $anon, key without upgrade -> $keyed"
+  if [ "$anon" = 401 ] && [ "$keyed" = 400 ]; then
+    echo "  ASSERT device socket route is live and keyed                : PASS"
+  else
+    echo "  ASSERT device socket route is live and keyed                : FAIL" >&2
+    exit 1
+  fi
+}
+
 cmd_verify() {
   read_key
   wait_gateway
+  probe_device_route
   probe_kind markdown markdown \
     "Use the render_artifact tool exactly once, with kind set to markdown, to display a short status document containing a level-one heading, a two-item bullet list, and a two-column table. Then reply with one short sentence."
   probe_kind image url \
