@@ -21,8 +21,10 @@ different tool set.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,10 @@ TOOLSET = "device_tools"
 # How long a fresh socket may stay silent before its hello is overdue.
 HELLO_TIMEOUT = 10.0
 
+# How long a call waits for the console's answer. Hermes gives a tool 420 s and then abandons the
+# worker, so the plugin keeps its own, short deadline: a voice turn cannot wait long.
+CALL_TIMEOUT = 10.0
+
 
 class DeviceBroker:
     """One console's socket, the tools it declared, and the calls waiting on it."""
@@ -39,7 +45,10 @@ class DeviceBroker:
     def __init__(self, ctx):
         self._ctx = ctx
         self._adapter = None
+        self._loop = None
         self._ws = None
+        # Call id -> (socket it went down, future for its answer). Touched on the gateway loop only.
+        self._pending = {}
         self._handles = {}
         self._tool_set = None
 
@@ -68,6 +77,7 @@ class DeviceBroker:
 
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
+        self._loop = asyncio.get_running_loop()
 
         try:
             first = await asyncio.wait_for(ws.receive(), HELLO_TIMEOUT)
@@ -88,11 +98,15 @@ class DeviceBroker:
         logger.info("device_tools: console connected with tools %s", [t["name"] for t in tools])
 
         try:
-            async for _msg in ws:
-                pass
+            async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    self._on_frame(ws, msg.data)
         finally:
             if self._ws is ws:
                 self._ws = None
+            for owner, answer in list(self._pending.values()):
+                if owner is ws and not answer.done():
+                    answer.set_exception(ConnectionError("socket closed"))
             logger.info("device_tools: console socket closed")
         return ws
 
@@ -128,7 +142,55 @@ class DeviceBroker:
         return handler
 
     def call(self, name, args):
-        raise NotImplementedError
+        """Run one tool on the console. Called on a Hermes worker thread; blocks until the answer."""
+        loop, ws = self._loop, self._ws
+        if loop is None or ws is None or ws.closed:
+            return _error("the console is not connected")
+        future = asyncio.run_coroutine_threadsafe(self._send_call(name, args), loop)
+        try:
+            # The coroutine enforces CALL_TIMEOUT itself; this outer bound only guards a stalled loop.
+            return future.result(CALL_TIMEOUT + 5.0)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            return _error("the console did not answer within %d s" % CALL_TIMEOUT)
+
+    async def _send_call(self, name, args):
+        ws = self._ws
+        if ws is None or ws.closed:
+            return _error("the console is not connected")
+        call_id = uuid.uuid4().hex
+        answer = asyncio.get_running_loop().create_future()
+        self._pending[call_id] = (ws, answer)
+        try:
+            await ws.send_json({"type": "call", "id": call_id, "tool": name, "args": args})
+            return await asyncio.wait_for(answer, CALL_TIMEOUT)
+        except asyncio.TimeoutError:
+            return _error("the console did not answer within %d s" % CALL_TIMEOUT)
+        except ConnectionError:
+            return _error("the console disconnected before it answered")
+        finally:
+            self._pending.pop(call_id, None)
+
+    def _on_frame(self, ws, text):
+        """Settle the waiting call a result frame answers. Anything else is dropped."""
+        try:
+            frame = json.loads(text)
+        except ValueError:
+            return
+        if not isinstance(frame, dict) or frame.get("type") != "result":
+            return
+        owner, answer = self._pending.get(frame.get("id"), (None, None))
+        if owner is not ws or answer.done():
+            return
+        if "error" in frame:
+            answer.set_result(_error(str(frame["error"])))
+        else:
+            result = frame.get("result", "")
+            answer.set_result(result if isinstance(result, str) else json.dumps(result))
+
+
+def _error(message):
+    return json.dumps({"error": message})
 
 
 def _hello_tools(text):

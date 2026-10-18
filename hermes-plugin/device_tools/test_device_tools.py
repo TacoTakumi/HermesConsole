@@ -204,3 +204,113 @@ def test_registry_replaces_the_tools_when_a_hello_brings_another_set():
             await client.close()
 
     run(scenario())
+
+
+def broker_of(ctx):
+    return ctx.factories[0][1].__self__
+
+
+async def in_worker(handler, args):
+    # Hermes runs tool handlers on a worker thread, never on the gateway loop.
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    result = await loop.run_in_executor(None, handler, args)
+    return result, loop.time() - started
+
+
+def test_not_connected_call_returns_an_error_at_once():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            await (await hello(client)).close()
+            await settle()
+            result, elapsed = await in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"})
+            assert "not connected" in result
+            assert elapsed < 1.0
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_call_goes_down_the_socket_and_returns_the_answer():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            ids = []
+            for answer in ("Launched X", "Launched Y"):
+                pending = asyncio.ensure_future(in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"}))
+                frame = await ws.receive_json(timeout=2)
+                assert frame["type"] == "call"
+                assert frame["tool"] == "launch_app"
+                assert frame["args"] == {"name": "x"}
+                assert isinstance(frame["id"], str) and frame["id"]
+                ids.append(frame["id"])
+                await ws.send_json({"type": "result", "id": frame["id"], "result": answer})
+                result, _ = await pending
+                assert result == answer
+            assert ids[0] != ids[1]
+            assert broker_of(ctx)._pending == {}
+            await ws.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_call_answered_with_an_error_returns_that_error():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            pending = asyncio.ensure_future(in_worker(ctx.tools["list_apps"]["handler"], {}))
+            frame = await ws.receive_json(timeout=2)
+            await ws.send_json({"type": "result", "id": frame["id"], "error": "no package manager"})
+            result, _ = await pending
+            assert "no package manager" in result
+            assert "error" in result
+            await ws.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_timeout_when_the_console_never_answers():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            result, elapsed = await in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"})
+            assert "did not answer" in result
+            assert 9.0 <= elapsed <= 11.0
+            assert broker_of(ctx)._pending == {}
+            await ws.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_disconnect_before_the_answer_returns_an_error_at_once():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+            pending = asyncio.ensure_future(in_worker(ctx.tools["launch_app"]["handler"], {"name": "x"}))
+            await ws.receive_json(timeout=2)
+            await ws.close()
+            result, elapsed = await pending
+            assert "disconnected" in result
+            assert elapsed < 2.0
+            assert broker_of(ctx)._pending == {}
+        finally:
+            await client.close()
+
+    run(scenario())
