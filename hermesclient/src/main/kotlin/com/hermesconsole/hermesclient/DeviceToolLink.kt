@@ -99,6 +99,17 @@ class DeviceToolLink(
         socket = http.newWebSocket(request, listenerFor(generation))
     }
 
+    /**
+     * The reconnect job's dial. Under the lock, the job first stops counting as pending, so a
+     * failure of this very dial schedules the next one; and it dials only if [close] has not run
+     * while it waited.
+     */
+    @Synchronized
+    private fun redial() {
+        reconnectJob = null
+        if (wantConnected) dial()
+    }
+
     @Synchronized
     private fun dropped(dialGeneration: Long) {
         if (dialGeneration != generation) return
@@ -110,7 +121,7 @@ class DeviceToolLink(
         reconnectAttempt++
         reconnectJob = scope.launch {
             delay(delayMs)
-            if (wantConnected) dial()
+            redial()
         }
     }
 

@@ -12,6 +12,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -23,7 +25,11 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The device tool link against a fake gateway socket: it dials the device route with the key,
@@ -177,6 +183,63 @@ class DeviceToolLinkTest {
         assertEquals("hello", nextFrame()["type"]!!.jsonPrimitive.content)
         nextSocket()
         assertEquals(2, server.requestCount)
+    }
+
+    /** Runs each OkHttp call on the thread that enqueues it, so a refused dial fails inside dial(). */
+    private class CallingThreadExecutor : AbstractExecutorService() {
+        @Volatile private var down = false
+        override fun execute(command: Runnable) = command.run()
+        override fun shutdown() { down = true }
+        override fun shutdownNow(): MutableList<Runnable> = mutableListOf<Runnable>().also { down = true }
+        override fun isShutdown() = down
+        override fun isTerminated() = down
+        override fun awaitTermination(timeout: Long, unit: TimeUnit) = true
+    }
+
+    /** A client whose every dial is counted and refused at once, on the dialling thread. */
+    private fun refusingClient(dials: AtomicInteger) = OkHttpClient.Builder()
+        .dispatcher(Dispatcher(CallingThreadExecutor()))
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                dials.incrementAndGet()
+                return Dns.SYSTEM.lookup(hostname)
+            }
+        })
+        .build()
+
+    private fun closedPort() = ServerSocket(0).use { it.localPort }
+
+    @Test
+    fun `a dial that fails while its reconnect is still finishing is dialled again`() = runBlocking {
+        val dials = AtomicInteger()
+        link = DeviceToolLink(
+            config = HermesConfig(host = "localhost", port = closedPort(), apiKey = TEST_KEY),
+            tools = tools,
+            http = refusingClient(dials),
+            reconnectDelayMs = 10,
+            maxReconnectDelayMs = 20,
+        ).also { it.connect() }
+
+        withTimeout(5_000) { while (dials.get() <= 3) delay(10) }
+    }
+
+    @Test
+    fun `close during a pending reconnect opens nothing`() = runBlocking {
+        val dials = AtomicInteger()
+        val started = DeviceToolLink(
+            config = HermesConfig(host = "localhost", port = closedPort(), apiKey = TEST_KEY),
+            tools = tools,
+            http = refusingClient(dials),
+            reconnectDelayMs = 200,
+            maxReconnectDelayMs = 200,
+        ).also { link = it; it.connect() }
+        // The first dial was refused; its reconnect now waits out the delay.
+        assertEquals(1, dials.get())
+
+        started.close()
+        delay(500)
+
+        assertEquals(1, dials.get())
     }
 
     @Test
