@@ -243,6 +243,11 @@ class DeviceToolLinkTest {
     }
 
     @Test
+    fun `the default client pings the socket so a silently dead path is noticed`() {
+        assertEquals(30_000, defaultDeviceHttp().pingIntervalMillis)
+    }
+
+    @Test
     fun `close stops the link and it does not dial again`() = runBlocking {
         upgrade()
         upgrade()

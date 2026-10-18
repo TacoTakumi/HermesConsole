@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.min
 
@@ -47,7 +48,7 @@ class DeviceTool(
 class DeviceToolLink(
     private val config: HermesConfig,
     private val tools: List<DeviceTool>,
-    private val http: OkHttpClient = OkHttpClient(),
+    private val http: OkHttpClient = defaultDeviceHttp(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val reconnectDelayMs: Long = 1_000,
     private val maxReconnectDelayMs: Long = 30_000,
@@ -177,6 +178,15 @@ class DeviceToolLink(
         const val MAX_BACKOFF_SHIFT = 16
     }
 }
+
+/**
+ * The link's HTTP client. It pings the socket every 30 s: a path that dies without a close - a VPN
+ * that drops, a gateway that loses power - then fails the socket instead of leaving the console
+ * holding a dead link that it never redials.
+ */
+internal fun defaultDeviceHttp(): OkHttpClient = OkHttpClient.Builder()
+    .pingInterval(30, TimeUnit.SECONDS)
+    .build()
 
 @Serializable
 internal data class DeviceToolSpec(val name: String, val description: String, val parameters: JsonObject)
