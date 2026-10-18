@@ -6,6 +6,7 @@ Run from the repo root: python3 -m pytest hermes-plugin/device_tools/test_device
 import asyncio
 import importlib.util
 import sys
+import threading
 from pathlib import Path
 
 import aiohttp
@@ -405,6 +406,37 @@ def test_hello_that_arrives_after_unload_is_closed_and_registers_nothing():
             assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
             assert ctx.tools == {}
             assert ctx.registered == []
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_unload_on_another_thread_during_registration_leaves_nothing_registered():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            broker = broker_of(ctx)
+            apply = broker._apply
+
+            def apply_while_unloading(tools):
+                # Hermes runs a reload's unload on its own thread: here it starts just as the hello
+                # is applied, and gets as far as it can before the registration goes on.
+                unloader = threading.Thread(target=ctx.unload)
+                unloader.start()
+                unloader.join(timeout=0.5)
+                apply(tools)
+
+            broker._apply = apply_while_unloading
+            ws = await client.ws_connect(device_tools.ROUTE, headers=AUTH)
+            await ws.send_json({"type": "hello", "tools": TOOLS})
+
+            msg = await ws.receive(timeout=3)
+            while msg.type == aiohttp.WSMsgType.TEXT:
+                msg = await ws.receive(timeout=3)
+            assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+            assert ctx.tools == {}
         finally:
             await client.close()
 

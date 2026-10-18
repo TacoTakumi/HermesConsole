@@ -29,6 +29,7 @@ import concurrent.futures
 import json
 import logging
 import sys
+import threading
 import types
 import uuid
 
@@ -57,22 +58,31 @@ class DeviceBroker:
         self._pending = {}
         self._handles = {}
         self._tool_set = None
+        # Hermes may unload on another thread (a reload runs off the gateway loop). This lock makes
+        # "still live?", the registration and the socket handover one step that unload waits for.
+        self._lock = threading.Lock()
+        self._unloaded = False
 
     def unload(self):
         """This load is going away: drop its tools' bookkeeping and close the console's socket.
 
-        The plugin manager disposes the registrations itself. Closing the socket fails the calls
-        waiting on it and makes the console dial again; its hello then reaches the next load's
-        broker, which registers the tools through its own context. With no next load (the
-        plugin was disabled) the route has no broker and refuses the console.
+        The broker disposes its own registrations too: one made just before the unload may be
+        newer than what the plugin manager tracked (disposing twice is harmless). Closing the
+        socket fails the calls waiting on it and makes the console dial again; its hello then
+        reaches the next load's broker, which registers the tools through its own context. With
+        no next load (the plugin was disabled) the route has no broker and refuses the console.
         """
         state = _state()
         if state.broker is self:
             state.broker = None
-        self._handles = {}
-        self._tool_set = None
-        loop, ws = self._loop, self._ws
-        self._ws = None
+        with self._lock:
+            self._unloaded = True
+            handles, self._handles = self._handles, {}
+            self._tool_set = None
+            loop, ws = self._loop, self._ws
+            self._ws = None
+        for handle in handles.values():
+            handle.dispose()
         if loop is None or ws is None or ws.closed or loop.is_closed():
             return
         try:
@@ -111,14 +121,16 @@ class DeviceBroker:
         if tools is None:
             await ws.close(code=1008, message=b"bad hello")
             return ws
-        if _state().broker is not self:
+        with self._lock:
+            live = not self._unloaded and _state().broker is self
+            if live:
+                self._apply(tools)
+                previous, self._ws = self._ws, ws
+        if not live:
             # This load was unloaded while the hello was on its way: its context must not register
             # anything. The console dials again and reaches the live load, if there is one.
             await ws.close(code=1012, message=b"plugin reloaded")
             return ws
-
-        self._apply(tools)
-        previous, self._ws = self._ws, ws
         if previous is not None and not previous.closed:
             # One console per profile: a new socket replaces the old one.
             await previous.close(code=1000, message=b"replaced")
