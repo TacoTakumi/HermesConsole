@@ -36,6 +36,12 @@ data class VoiceManagerConfig(
     /** The token, formatted for the Authorization header. Never logged. */
     internal val authorization: String get() = "Bearer $apiKey"
 
+    /** The generated toString would print the token into any log line or message that shows a config. */
+    override fun toString(): String =
+        "VoiceManagerConfig(host=$host, port=$port, apiKey=***, sampleRate=$sampleRate, " +
+            "chunkSamples=$chunkSamples, tls=$tls, reconnectDelayMs=$reconnectDelayMs, " +
+            "maxReconnectDelayMs=$maxReconnectDelayMs)"
+
     /** OkHttp dials ws:// over the http scheme, so http/https is the right scheme here. */
     internal fun streamUrl(): HttpUrl = HttpUrl.Builder()
         .scheme(if (tls) "https" else "http")

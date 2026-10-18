@@ -25,6 +25,9 @@ data class HermesConfig(
     /** The bearer credential, formatted for the wire. Never logged, never in an exception message. */
     internal val authorization: String get() = "Bearer $apiKey"
 
+    /** The generated toString would print the key into any log line or message that shows a config. */
+    override fun toString(): String = "HermesConfig(host=$host, port=$port, apiKey=***, tls=$tls)"
+
     internal fun runsUrl(): HttpUrl = base().addPathSegments("v1/runs").build()
 
     /** The health probe's target (REQ-23): the cheapest authenticated GET the gateway serves. */
