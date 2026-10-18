@@ -221,16 +221,16 @@ def test_registry_replaces_the_tools_when_a_hello_brings_another_set():
     run(scenario())
 
 
-def test_second_hello_closes_the_replaced_socket_with_the_replaced_code():
+def test_two_consoles_stay_connected_side_by_side():
     async def scenario():
         client = await start(FakeCtx())
         try:
             first = await hello(client)
             second = await hello(client)
-            msg = await first.receive(timeout=2)
-            assert msg.type == aiohttp.WSMsgType.CLOSE
-            assert msg.data == device_tools.REPLACED_CLOSE
-            assert not second.closed
+            with pytest.raises(asyncio.TimeoutError):
+                await first.receive(timeout=1)
+            assert not first.closed and not second.closed
+            await first.close()
             await second.close()
         finally:
             await client.close()

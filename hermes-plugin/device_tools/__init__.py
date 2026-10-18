@@ -14,8 +14,8 @@ Wire frames, JSON text:
     console -> {"type": "result", "id": "<id>", "result": "<text>"}
     console -> {"type": "result", "id": "<id>", "error": "<text>"}
 
-One console per profile: a newer console's hello replaces the old socket, closed with
-REPLACED_CLOSE.
+Several consoles can share the profile. Each keeps its own socket, and no hello closes another
+console's socket.
 
 The tools stay registered when the socket closes. Every register or dispose bumps the registry
 generation, which rebuilds cached agents and makes an open conversation process its whole history
@@ -45,38 +45,34 @@ TOOLSET = "device_tools"
 # How long a fresh socket may stay silent before its hello is overdue.
 HELLO_TIMEOUT = 10.0
 
-# The close code for a socket a newer console replaced. The console does not dial again on it.
-REPLACED_CLOSE = 4000
-
 # How long a call waits for the console's answer. Hermes gives a tool 420 s and then abandons the
 # worker, so the plugin keeps its own, short deadline: a voice turn cannot wait long.
 CALL_TIMEOUT = 10.0
 
 
 class DeviceBroker:
-    """One console's socket, the tools it declared, and the calls waiting on it."""
+    """The consoles' sockets, the tools they declared, and the calls waiting on them."""
 
     def __init__(self, ctx):
         self._ctx = ctx
         self._loop = None
-        self._ws = None
+        # Live console sockets, oldest hello first.
+        self._sockets = []
         # Call id -> (socket it went down, future for its answer). Touched on the gateway loop only.
         self._pending = {}
         self._handles = {}
         self._tool_set = None
-        # Sockets a newer console replaced, still to be closed by their own handler.
-        self._replaced = set()
         # Hermes may unload on another thread (a reload runs off the gateway loop). This lock makes
         # "still live?", the registration and the socket handover one step that unload waits for.
         self._lock = threading.Lock()
         self._unloaded = False
 
     def unload(self):
-        """This load is going away: drop its tools' bookkeeping and close the console's socket.
+        """This load is going away: drop its tools' bookkeeping and close the consoles' sockets.
 
         The broker disposes its own registrations too: one made just before the unload may be
-        newer than what the plugin manager tracked (disposing twice is harmless). Closing the
-        socket fails the calls waiting on it and makes the console dial again; its hello then
+        newer than what the plugin manager tracked (disposing twice is harmless). Closing a
+        socket fails the calls waiting on it and makes its console dial again; its hello then
         reaches the next load's broker, which registers the tools through its own context. With
         no next load (the plugin was disabled) the route has no broker and refuses the console.
         """
@@ -87,16 +83,19 @@ class DeviceBroker:
             self._unloaded = True
             handles, self._handles = self._handles, {}
             self._tool_set = None
-            loop, ws = self._loop, self._ws
-            self._ws = None
+            loop, sockets = self._loop, self._sockets
+            self._sockets = []
         for handle in handles.values():
             handle.dispose()
-        if loop is None or ws is None or ws.closed or loop.is_closed():
+        if loop is None or loop.is_closed():
             return
-        try:
-            asyncio.run_coroutine_threadsafe(ws.close(code=1012, message=b"plugin reloaded"), loop)
-        except RuntimeError:
-            pass  # the loop is shutting down; the socket goes with it
+        for ws in sockets:
+            if ws.closed:
+                continue
+            try:
+                asyncio.run_coroutine_threadsafe(ws.close(code=1012, message=b"plugin reloaded"), loop)
+            except RuntimeError:
+                return  # the loop is shutting down; the sockets go with it
 
     def _refusal(self, request):
         # Plugin routes get no auth from the adapter, so the route applies the adapter's own Bearer
@@ -133,19 +132,12 @@ class DeviceBroker:
             live = not self._unloaded and _state().broker is self
             if live:
                 self._apply(tools)
-                previous, self._ws = self._ws, ws
+                self._sockets.append(ws)
         if not live:
             # This load was unloaded while the hello was on its way: its context must not register
             # anything. The console dials again and reaches the live load, if there is one.
             await ws.close(code=1012, message=b"plugin reloaded")
             return ws
-        if previous is not None and not previous.closed:
-            # One console per profile: a new socket replaces the old one. The replaced console
-            # stops dialing on REPLACED_CLOSE, so two consoles on one profile do not take turns.
-            # aiohttp closes a socket with 1000 when its handler returns, ahead of this close, so
-            # the old socket's own handler sends the code.
-            self._replaced.add(previous)
-            await previous.close(code=REPLACED_CLOSE, message=b"replaced")
         await ws.send_json({"type": "ready"})
         logger.info("device_tools: console connected with tools %s", [t["name"] for t in tools])
 
@@ -153,12 +145,10 @@ class DeviceBroker:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     self._on_frame(ws, msg.data)
-            if ws in self._replaced:
-                await ws.close(code=REPLACED_CLOSE, message=b"replaced")
         finally:
-            self._replaced.discard(ws)
-            if self._ws is ws:
-                self._ws = None
+            with self._lock:
+                if ws in self._sockets:
+                    self._sockets.remove(ws)
             for owner, answer in list(self._pending.values()):
                 if owner is ws and not answer.done():
                     answer.set_exception(ConnectionError("socket closed"))
@@ -198,8 +188,8 @@ class DeviceBroker:
 
     def call(self, name, args):
         """Run one tool on the console. Called on a Hermes worker thread; blocks until the answer."""
-        loop, ws = self._loop, self._ws
-        if loop is None or ws is None or ws.closed:
+        loop, ws = self._loop, self._newest()
+        if loop is None or ws is None:
             return _error("the console is not connected")
         future = asyncio.run_coroutine_threadsafe(self._send_call(name, args), loop)
         try:
@@ -210,8 +200,8 @@ class DeviceBroker:
             return _error("the console did not answer within %d s" % CALL_TIMEOUT)
 
     async def _send_call(self, name, args):
-        ws = self._ws
-        if ws is None or ws.closed:
+        ws = self._newest()
+        if ws is None:
             return _error("the console is not connected")
         call_id = uuid.uuid4().hex
         answer = asyncio.get_running_loop().create_future()
@@ -225,6 +215,11 @@ class DeviceBroker:
             return _error("the console disconnected before it answered")
         finally:
             self._pending.pop(call_id, None)
+
+    def _newest(self):
+        """The live socket of the newest hello, or None."""
+        live = [ws for ws in self._sockets if not ws.closed]
+        return live[-1] if live else None
 
     def _on_frame(self, ws, text):
         """Settle the waiting call a result frame answers. Anything else is dropped."""
