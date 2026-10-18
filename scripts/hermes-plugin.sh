@@ -27,11 +27,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HERMES_SSH="${HERMES_SSH:?set HERMES_SSH to the gateway host ssh login, e.g. you@gateway}"
-# No defaults for these two: a default would be the default profile, and device_tools there would
-# hand the console's device tools to every Hermes session.
+# No defaults for these three: a default would be the default profile, and device_tools there would
+# hand the console's device tools to every Hermes session; a default URL would probe a different
+# gateway from the one just deployed. They must name one profile together.
 HERMES_HOME_DIR="${HERMES_HOME_DIR:?set HERMES_HOME_DIR to the console profile home, relative to the gateway user home, e.g. .hermes/profiles/console}"
 HERMES_SERVICE="${HERMES_SERVICE:?set HERMES_SERVICE to the gateway unit that serves that profile, e.g. hermes-gateway-console.service}"
-HERMES_URL="${HERMES_URL:-http://127.0.0.1:8642}"
+HERMES_URL="${HERMES_URL:?set HERMES_URL to the api_server that serves that profile, e.g. http://gateway:8643}"
 HERMES_KEY_FILE="${HERMES_KEY_FILE:-$HOME/.hermes/api_server.env}"
 
 PLUGINS=(render_artifact device_tools)
@@ -54,26 +55,9 @@ cmd_check() {
       fi
     done
   done
-  # The heredoc is quoted and expanded locally; the remote shell never parses the python.
-  ssh -o BatchMode=yes "$HERMES_SSH" python3 - "$HERMES_HOME_DIR" "${PLUGINS[@]}" <<'PY' || rc=1
-import re, sys
-from pathlib import Path
-home, plugins = sys.argv[1], sys.argv[2:]
-lines = (Path.home() / home / "config.yaml").read_text().splitlines()
-try:
-    start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
-except StopIteration:
-    start = len(lines)
-end = next((j for j in range(start + 1, len(lines)) if re.match(r"^\S", lines[j])), len(lines))
-rc = 0
-for name in plugins:
-    if any(re.match(r"^\s*-\s*%s\s*$" % re.escape(name), l) for l in lines[start:end]):
-        print("CHECK: config.yaml: %s is in plugins.enabled" % name)
-    else:
-        print("CHECK: config.yaml: %s NOT in plugins.enabled - run deploy" % name, file=sys.stderr)
-        rc = 1
-sys.exit(rc)
-PY
+  # The config logic is a file of its own (tested locally); the remote python reads it from stdin.
+  ssh -o BatchMode=yes "$HERMES_SSH" python3 - check "$HERMES_HOME_DIR" "${PLUGINS[@]}" \
+    < scripts/hermes_plugin_config.py || rc=1
   return "$rc"
 }
 
@@ -88,36 +72,10 @@ cmd_deploy() {
     done
   done
 
-  # Plugins are opt-in: append each to plugins.enabled if it is not already there. Surgical line
-  # insert, never a YAML round-trip - config.yaml is the operator's file and its comments must
-  # survive. Timestamped backup first, matching the host's own convention.
-  ssh -o BatchMode=yes "$HERMES_SSH" python3 - "$HERMES_HOME_DIR" "${PLUGINS[@]}" <<'PY'
-import re, shutil, sys, time
-from pathlib import Path
-home, plugins = sys.argv[1], sys.argv[2:]
-p = Path.home() / home / "config.yaml"
-lines = p.read_text().splitlines(keepends=True)
-try:
-    start = next(i for i, l in enumerate(lines) if re.match(r"^plugins:\s*$", l))
-except StopIteration:
-    sys.exit("config: no top-level plugins: block - add %s to plugins.enabled by hand" % ", ".join(plugins))
-end = next((j for j in range(start + 1, len(lines)) if re.match(r"^\S", lines[j])), len(lines))
-missing = [n for n in plugins
-           if not any(re.match(r"^\s*-\s*%s\s*$" % re.escape(n), l) for l in lines[start:end])]
-if not missing:
-    print("config: %s already enabled" % ", ".join(plugins))
-    sys.exit(0)
-try:
-    en = next(i for i in range(start + 1, end) if re.match(r"^  enabled:\s*$", lines[i]))
-except StopIteration:
-    sys.exit("config: no enabled: list under plugins: - add %s by hand" % ", ".join(missing))
-backup = p.with_name("config.yaml.bak." + time.strftime("%Y%m%d_%H%M%S"))
-shutil.copy2(p, backup)
-for name in reversed(missing):
-    lines.insert(en + 1, "    - %s\n" % name)
-p.write_text("".join(lines))
-print("config: enabled %s (backup %s)" % (", ".join(missing), backup.name))
-PY
+  # Plugins are opt-in: add each to plugins.enabled if it is not already there (see
+  # hermes_plugin_config.py: line edits that keep the operator's comments, backup first).
+  ssh -o BatchMode=yes "$HERMES_SSH" python3 - enable "$HERMES_HOME_DIR" "${PLUGINS[@]}" \
+    < scripts/hermes_plugin_config.py
 
   # Plugins and config are both read at process start, so a restart is required, not a reload.
   ssh -o BatchMode=yes "$HERMES_SSH" "systemctl --user restart '$HERMES_SERVICE'"
