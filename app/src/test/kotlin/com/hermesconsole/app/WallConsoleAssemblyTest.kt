@@ -1,6 +1,8 @@
 package com.hermesconsole.app
 
+import com.hermesconsole.app.devicetools.MediaVolume
 import com.hermesconsole.app.devicetools.appTools
+import com.hermesconsole.app.devicetools.volumeTools
 import com.hermesconsole.audio.AudioCapture
 import com.hermesconsole.audio.AudioConfig
 import com.hermesconsole.audio.AudioSink
@@ -111,6 +113,13 @@ class WallConsoleAssemblyTest {
         launch = {},
         consoleInFront = { true },
         bringConsoleToFront = {},
+    ) + volumeTools(
+        media = object : MediaVolume {
+            override var index = 9
+            override val max = 15
+        },
+        voicePercent = { 100 },
+        setVoicePercent = {},
     )
 
     /** A test that closes the console itself; teardown must not close it twice. */
@@ -233,12 +242,12 @@ class WallConsoleAssemblyTest {
         }
 
     @Test
-    fun `the console opens its device socket with its app tools and closes it with itself`(): Unit =
+    fun `the console opens its device socket with its device tools and closes it with itself`(): Unit =
         runBlocking {
             val hello = withTimeout(10_000) { Json.parseToJsonElement(deviceFrames.receive()).jsonObject }
             assertEquals("hello", hello["type"]!!.jsonPrimitive.content)
             assertEquals(
-                listOf("list_apps", "launch_app", "return_home"),
+                listOf("list_apps", "launch_app", "return_home", "get_volume", "set_volume"),
                 hello["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
             )
 

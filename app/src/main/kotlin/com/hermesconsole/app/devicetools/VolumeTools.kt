@@ -1,5 +1,6 @@
 package com.hermesconsole.app.devicetools
 
+import android.media.AudioManager
 import android.util.Log
 import com.hermesconsole.hermesclient.DeviceTool
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +19,14 @@ private const val TAG = "DeviceTools"
 interface MediaVolume {
     var index: Int
     val max: Int
+}
+
+/** Android's media stream (STREAM_MUSIC), which YouTube and Spotify play on. Needs no permission. */
+class StreamMusicVolume(private val audioManager: AudioManager) : MediaVolume {
+    override var index: Int
+        get() = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        set(value) = audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0)
+    override val max: Int get() = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
 }
 
 /**

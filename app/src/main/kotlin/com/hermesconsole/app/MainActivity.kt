@@ -27,7 +27,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.CompositionLocalProvider
 import com.hermesconsole.app.artifacts.ArtifactRouter
 import com.hermesconsole.app.devicetools.appTools
+import com.hermesconsole.app.devicetools.StreamMusicVolume
 import com.hermesconsole.app.devicetools.launcherApps
+import com.hermesconsole.app.devicetools.volumeTools
 import com.hermesconsole.app.tools.ToolActivityRouter
 import com.hermesconsole.app.tools.ToolLine
 import com.hermesconsole.app.tools.linesForSession
@@ -39,6 +41,7 @@ import com.hermesconsole.audio.AudioTrackSinkFactory
 import com.hermesconsole.audio.MicPipeline
 import com.hermesconsole.audio.NativeSoftwareAec
 import com.hermesconsole.audio.OneShotSink
+import com.hermesconsole.audio.OutputGain
 import com.hermesconsole.audio.SoftwareAec
 import com.hermesconsole.audio.TtsPlayer
 import com.hermesconsole.hermesclient.DeviceTool
@@ -72,6 +75,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /**
  * The console shell. A wall-mounted appliance: fullscreen, portrait, no system bars.
@@ -114,6 +118,12 @@ class MainActivity : ComponentActivity() {
      * path - the debug console carries its own - and closed with the activity.
      */
     private var cuePlayer: LcarsCuePlayer? = null
+
+    /**
+     * The console's own playback level: speech, announcements and cues all read it, so set_volume
+     * on voice turns them down together, live, without touching the media stream.
+     */
+    private val outputGain = OutputGain()
 
     /**
      * The persisted runtime config (T-23, REQ-28): every launch reads its backends from here,
@@ -168,8 +178,8 @@ class MainActivity : ComponentActivity() {
         // 45 ms chirp into a long-lived track starved it between taps and the restart ate the chirp
         // (measured on-device). Both resolve the same route, so the AEC coverage is identical.
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val sinks = AudioTrackSinkFactory(audioManager, AudioConfig()).also { sinkFactory = it }
-        val cues = LcarsCuePlayer(AudioTrackOneShotSink(audioManager, AudioConfig())).also { cuePlayer = it }
+        val sinks = AudioTrackSinkFactory(audioManager, AudioConfig(), outputGain).also { sinkFactory = it }
+        val cues = LcarsCuePlayer(AudioTrackOneShotSink(audioManager, AudioConfig(), outputGain)).also { cuePlayer = it }
 
         // The console's state: the live loop's the moment it exists (T-22), a READY constant
         // until then - which is exactly what an active but unengaged console shows (REQ-35).
@@ -186,6 +196,11 @@ class MainActivity : ComponentActivity() {
         // on their next restart, which is exactly how a save applies without a reinstall.
         val idleSettings = settingsStore.settings
             .stateIn(lifecycleScope, SharingStarted.Eagerly, BackendSettings())
+
+        // The stored voice level, applied to every console track at start and on each change.
+        lifecycleScope.launch {
+            idleSettings.collect { outputGain.set(it.voiceVolumePercent / 100f) }
+        }
 
         // The console's idle clocks (T-21/T-16, REQ-22/REQ-16), owned here because the dim is the
         // window's. Both read their interval through a supplier, so what a person just typed on the
@@ -456,6 +471,7 @@ class MainActivity : ComponentActivity() {
             announcementSink = AudioTrackOneShotSink(
                 getSystemService(Context.AUDIO_SERVICE) as AudioManager,
                 AudioConfig(),
+                outputGain,
             ),
             capture = mic,
             wake = WakeWordDetector(applicationContext),
@@ -479,6 +495,15 @@ class MainActivity : ComponentActivity() {
                     withContext(Dispatchers.Main) {
                         startActivity(Intent(this@MainActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }
+                },
+            ) + volumeTools(
+                media = StreamMusicVolume(getSystemService(Context.AUDIO_SERVICE) as AudioManager),
+                voicePercent = { (outputGain.value * 100).roundToInt() },
+                // The gain first, so the reply that follows is already at the new level; the store
+                // keeps it across a restart.
+                setVoicePercent = { percent ->
+                    outputGain.set(percent / 100f)
+                    settingsStore.saveVoiceVolume(percent)
                 },
             ),
             scope = lifecycleScope,
