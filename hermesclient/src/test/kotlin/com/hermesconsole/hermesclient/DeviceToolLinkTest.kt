@@ -265,6 +265,49 @@ class DeviceToolLinkTest {
         assertEquals(1, dials.get())
     }
 
+    /** A gateway end that records when each socket opened, answers ready or not, then hangs up. */
+    private fun hangingUp(opens: MutableList<Long>, sayReady: Boolean) = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            synchronized(opens) { opens += System.nanoTime() }
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (sayReady) webSocket.send("""{"type":"ready"}""")
+            webSocket.close(1000, "bye")
+        }
+    }
+
+    private fun gapsMs(opens: List<Long>) = opens.zipWithNext { a, b -> (b - a) / 1_000_000 }
+
+    private suspend fun dialsUntil(opens: MutableList<Long>, count: Int) =
+        withTimeout(10_000) { while (synchronized(opens) { opens.size } < count) delay(10) }
+
+    @Test
+    fun `a gateway that hangs up before ready makes the link back off`() = runBlocking {
+        val opens = mutableListOf<Long>()
+        repeat(6) { server.enqueue(MockResponse().withWebSocketUpgrade(hangingUp(opens, sayReady = false))) }
+        link = DeviceToolLink(server.hermesConfig(), tools, http, reconnectDelayMs = 50, maxReconnectDelayMs = 5_000)
+            .also { it.connect() }
+
+        dialsUntil(opens, 5)
+
+        val gaps = gapsMs(synchronized(opens) { opens.toList() })
+        assertTrue(gaps[3] > 3 * gaps[0], "gaps should grow without a ready: $gaps")
+    }
+
+    @Test
+    fun `a ready resets the backoff to the base delay`() = runBlocking {
+        val opens = mutableListOf<Long>()
+        repeat(6) { server.enqueue(MockResponse().withWebSocketUpgrade(hangingUp(opens, sayReady = true))) }
+        link = DeviceToolLink(server.hermesConfig(), tools, http, reconnectDelayMs = 50, maxReconnectDelayMs = 5_000)
+            .also { it.connect() }
+
+        dialsUntil(opens, 5)
+
+        val gaps = gapsMs(synchronized(opens) { opens.toList() })
+        assertTrue(gaps.all { it < 300 }, "every redial after a ready should wait about the base delay: $gaps")
+    }
+
     @Test
     fun `the default client pings the socket so a silently dead path is noticed`() {
         assertEquals(30_000, defaultDeviceHttp().pingIntervalMillis)

@@ -111,6 +111,15 @@ class DeviceToolLink(
         if (wantConnected) dial()
     }
 
+    /**
+     * The gateway accepted the hello. Only now does the backoff reset: a socket the gateway closes
+     * before ready (a refused hello, a second console taking over) is a failed dial, not a success.
+     */
+    @Synchronized
+    private fun accepted(dialGeneration: Long) {
+        if (dialGeneration == generation) reconnectAttempt = 0
+    }
+
     @Synchronized
     private fun dropped(dialGeneration: Long) {
         if (dialGeneration != generation) return
@@ -132,7 +141,6 @@ class DeviceToolLink(
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (stale()) return
-            reconnectAttempt = 0
             val hello = DeviceHelloFrame(
                 type = "hello",
                 tools = tools.map { DeviceToolSpec(it.name, it.description, it.parameters) },
@@ -142,6 +150,10 @@ class DeviceToolLink(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (stale()) return
+            if (isReady(text)) {
+                accepted(dialGeneration)
+                return
+            }
             val call = parseCall(text) ?: return
             scope.launch { webSocket.send(answer(call)) }
         }
@@ -204,6 +216,11 @@ internal data class DeviceResultFrame(
 )
 
 internal class DeviceCall(val id: String, val tool: String, val args: JsonObject)
+
+/** True for the gateway's ready frame, its answer to an accepted hello. */
+internal fun isReady(text: String): Boolean = runCatching {
+    hermesJson.parseToJsonElement(text).jsonObject["type"]?.jsonPrimitive?.content == "ready"
+}.getOrDefault(false)
 
 /** A call frame, or null for anything else (the ready frame, or a frame this console does not know). */
 internal fun parseCall(text: String): DeviceCall? = runCatching {
