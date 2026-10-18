@@ -61,10 +61,58 @@ AudioProcessing library. To rebuild it from the pinned WebRTC revision, see
 
 3. Set the console as the HOME app when Android asks.
 
-To install the plugin, `scripts/hermes-plugin.sh` needs your gateway's ssh
-login and URL in the environment:
+Point the console at its own Hermes profile, set up as in the next section.
 
-    HERMES_SSH=you@gateway HERMES_URL=http://gateway:8642 ./scripts/hermes-plugin.sh all
+## Console profile
+
+Run the console on a Hermes profile of its own, served by its own gateway
+instance on its own port. The console's persona and its device tools then stay
+out of your other Hermes sessions.
+
+1. Create the profile and its gateway service on the gateway host:
+
+       hermes profile create console
+       hermes --profile console gateway install
+
+   The profile home is `/home/you/.hermes/profiles/console`. The service is
+   `hermes-gateway-console.service`.
+
+2. In the profile's `.env`, enable the api_server on a port of its own and
+   set its key:
+
+       API_SERVER_ENABLED=true
+       API_SERVER_HOST=0.0.0.0
+       API_SERVER_PORT=8643
+       API_SERVER_KEY=<a long random key>
+
+   This key is the console's token. Enter it, the gateway host and port 8643
+   on the console's settings screen. The console uses the same key for its
+   turns and for its device tool socket.
+
+3. Write the console's persona to `SOUL.md` in the profile home. The gateway
+   reads it at start. Keep replies short and spoken: the console reads them
+   aloud, and anything long belongs on its display through `render_artifact`.
+
+4. Install the two plugins in the profile with `scripts/hermes-plugin.sh`. It
+   copies them to the profile's `plugins/` directory, adds them to
+   `plugins.enabled` in the profile's `config.yaml`, and restarts the
+   profile's gateway:
+
+       HERMES_SSH=you@gateway \
+       HERMES_HOME_DIR=.hermes/profiles/console \
+       HERMES_SERVICE=hermes-gateway-console.service \
+       HERMES_URL=http://gateway:8643 \
+       ./scripts/hermes-plugin.sh all
+
+   - `render_artifact` shows documents and images on the console's display.
+   - `device_tools` adds the `/v1/device/ws` socket. The console connects to
+     it, so the gateway never has to reach the tablet, also behind a VPN or
+     with a changing address. The tools the console declares there
+     (`list_apps` and `launch_app`) appear in this profile only.
+
+   `HERMES_HOME_DIR` is relative to the gateway user's home. The script reads
+   the key from `HERMES_KEY_FILE` (default `~/.hermes/api_server.env`, a
+   `KEY=` line) for its live check.
 
 ## Gateway changes
 
@@ -95,7 +143,7 @@ Then add this to the `config.yaml` of the profile you run `hermes update` from:
 Without it, `hermes update` switches a branch with extra commits back to
 `main`, and the gateway silently loses the console changes. With it, `hermes
 update` merges upstream `main` into the branch, which keeps it current. Then
-restart your gateway, and install the `render_artifact` plugin (see Setup).
+restart your gateway, and install the plugins (see Console profile).
 
 Do not merge or pull the branch into `main`, and do not pull the fork's branch
 into your copy: the fork's branch is rebased onto upstream from time to time.
@@ -128,7 +176,7 @@ https://github.com/TacoTakumi/VoiceManager.
 - `wakeword` - the wake-word detector. Android, no UI.
 - `voiceclient` - VoiceManager client. Plain Kotlin/JVM.
 - `hermesclient` - Hermes gateway client. Plain Kotlin/JVM.
-- `hermes-plugin` - the `render_artifact` gateway plugin.
+- `hermes-plugin` - the `render_artifact` and `device_tools` gateway plugins.
 - `webrtc-sdk` - the JNI bridge and build for the WebRTC AEC3 library.
 
 ## Tests
