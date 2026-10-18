@@ -185,6 +185,19 @@ class DeviceToolLinkTest {
         assertEquals(2, server.requestCount)
     }
 
+    @Test
+    fun `a socket a newer console replaced is not dialled again`() = runBlocking {
+        upgrade()
+        upgrade()
+        startLink()
+        nextFrame() // hello
+
+        nextSocket().close(4000, "replaced")
+        delay(500)
+
+        assertEquals(1, server.requestCount)
+    }
+
     /** Runs each OkHttp call on the thread that enqueues it, so a refused dial fails inside dial(). */
     private class CallingThreadExecutor : AbstractExecutorService() {
         @Volatile private var down = false

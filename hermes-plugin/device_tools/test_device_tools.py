@@ -221,6 +221,23 @@ def test_registry_replaces_the_tools_when_a_hello_brings_another_set():
     run(scenario())
 
 
+def test_second_hello_closes_the_replaced_socket_with_the_replaced_code():
+    async def scenario():
+        client = await start(FakeCtx())
+        try:
+            first = await hello(client)
+            second = await hello(client)
+            msg = await first.receive(timeout=2)
+            assert msg.type == aiohttp.WSMsgType.CLOSE
+            assert msg.data == device_tools.REPLACED_CLOSE
+            assert not second.closed
+            await second.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
 def broker_of(ctx):
     return sys.modules[device_tools.STATE_MODULE].broker
 

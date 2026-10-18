@@ -39,7 +39,8 @@ class DeviceTool(
  * tool and the answer goes back on the same socket with the call's id.
  *
  * Kept up until [close]: a dropped socket is dialled again with a capped backoff, and the hello
- * goes out again on every connect. A wrong key is retried too - the console's other Hermes traffic
+ * goes out again on every connect. The one exception is a newer console on the same profile
+ * replacing this one: then the link stops. A wrong key is retried too - the console's other Hermes traffic
  * shows that fault, and a capped retry costs the gateway nothing.
  *
  * This is not conversation: turns stay on /v1/runs. The socket only carries tool calls the model
@@ -113,11 +114,22 @@ class DeviceToolLink(
 
     /**
      * The gateway accepted the hello. Only now does the backoff reset: a socket the gateway closes
-     * before ready (a refused hello, a second console taking over) is a failed dial, not a success.
+     * before ready (a refused hello) is a failed dial, not a success.
      */
     @Synchronized
     private fun accepted(dialGeneration: Long) {
         if (dialGeneration == generation) reconnectAttempt = 0
+    }
+
+    /**
+     * A newer console on the same profile took the socket over. Dialling again would take it back
+     * and the two would take turns forever, so this link stops; a new console dials again.
+     */
+    @Synchronized
+    private fun replaced(dialGeneration: Long) {
+        if (dialGeneration != generation) return
+        socket = null
+        wantConnected = false
     }
 
     @Synchronized
@@ -160,7 +172,7 @@ class DeviceToolLink(
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(NORMAL_CLOSURE, null)
-            dropped(dialGeneration)
+            if (code == REPLACED_CLOSE) replaced(dialGeneration) else dropped(dialGeneration)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -187,6 +199,9 @@ class DeviceToolLink(
 
     private companion object {
         const val NORMAL_CLOSURE = 1000
+
+        /** The gateway's close code for a socket a newer console replaced (device_tools REPLACED_CLOSE). */
+        const val REPLACED_CLOSE = 4000
         const val MAX_BACKOFF_SHIFT = 16
     }
 }

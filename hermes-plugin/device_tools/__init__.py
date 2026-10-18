@@ -14,6 +14,9 @@ Wire frames, JSON text:
     console -> {"type": "result", "id": "<id>", "result": "<text>"}
     console -> {"type": "result", "id": "<id>", "error": "<text>"}
 
+One console per profile: a newer console's hello replaces the old socket, closed with
+REPLACED_CLOSE.
+
 The tools stay registered when the socket closes. Every register or dispose bumps the registry
 generation, which rebuilds cached agents and makes an open conversation process its whole history
 again, so a Wi-Fi drop must not churn the tool list. A hello re-registers only when it brings a
@@ -42,6 +45,9 @@ TOOLSET = "device_tools"
 # How long a fresh socket may stay silent before its hello is overdue.
 HELLO_TIMEOUT = 10.0
 
+# The close code for a socket a newer console replaced. The console does not dial again on it.
+REPLACED_CLOSE = 4000
+
 # How long a call waits for the console's answer. Hermes gives a tool 420 s and then abandons the
 # worker, so the plugin keeps its own, short deadline: a voice turn cannot wait long.
 CALL_TIMEOUT = 10.0
@@ -58,6 +64,8 @@ class DeviceBroker:
         self._pending = {}
         self._handles = {}
         self._tool_set = None
+        # Sockets a newer console replaced, still to be closed by their own handler.
+        self._replaced = set()
         # Hermes may unload on another thread (a reload runs off the gateway loop). This lock makes
         # "still live?", the registration and the socket handover one step that unload waits for.
         self._lock = threading.Lock()
@@ -132,8 +140,12 @@ class DeviceBroker:
             await ws.close(code=1012, message=b"plugin reloaded")
             return ws
         if previous is not None and not previous.closed:
-            # One console per profile: a new socket replaces the old one.
-            await previous.close(code=1000, message=b"replaced")
+            # One console per profile: a new socket replaces the old one. The replaced console
+            # stops dialing on REPLACED_CLOSE, so two consoles on one profile do not take turns.
+            # aiohttp closes a socket with 1000 when its handler returns, ahead of this close, so
+            # the old socket's own handler sends the code.
+            self._replaced.add(previous)
+            await previous.close(code=REPLACED_CLOSE, message=b"replaced")
         await ws.send_json({"type": "ready"})
         logger.info("device_tools: console connected with tools %s", [t["name"] for t in tools])
 
@@ -141,7 +153,10 @@ class DeviceBroker:
             async for msg in ws:
                 if msg.type == WSMsgType.TEXT:
                     self._on_frame(ws, msg.data)
+            if ws in self._replaced:
+                await ws.close(code=REPLACED_CLOSE, message=b"replaced")
         finally:
+            self._replaced.discard(ws)
             if self._ws is ws:
                 self._ws = None
             for owner, answer in list(self._pending.values()):

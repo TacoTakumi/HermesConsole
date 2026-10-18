@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.1]
+
+### Fixed
+
+- Two consoles on one Hermes profile no longer take the device tool socket
+  from each other about once a second. The newest console keeps it: the
+  device_tools plugin closes the replaced socket with code 4000, and a console
+  that gets 4000 does not dial again until it starts again. Deploy the plugin
+  and the app together.
+
 ## [0.2.0]
 
 ### Added
