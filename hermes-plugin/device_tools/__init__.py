@@ -18,17 +18,24 @@ The tools stay registered when the socket closes. Every register or dispose bump
 generation, which rebuilds cached agents and makes an open conversation process its whole history
 again, so a Wi-Fi drop must not churn the tool list. A hello re-registers only when it brings a
 different tool set.
+
+A plugin reload runs this file again as a new module, but the route stays: the api_server's router
+froze when it connected. So the route and every load share one state object kept in sys.modules,
+and the route always serves the latest load's broker.
 """
 
 import asyncio
 import concurrent.futures
 import json
 import logging
+import sys
+import types
 import uuid
 
 logger = logging.getLogger(__name__)
 
 ROUTE = "/v1/device/ws"
+STATE_MODULE = "_hermesconsole_device_tools_state"
 TOOLSET = "device_tools"
 
 # How long a fresh socket may stay silent before its hello is overdue.
@@ -44,7 +51,6 @@ class DeviceBroker:
 
     def __init__(self, ctx):
         self._ctx = ctx
-        self._adapter = None
         self._loop = None
         self._ws = None
         # Call id -> (socket it went down, future for its answer). Touched on the gateway loop only.
@@ -52,10 +58,23 @@ class DeviceBroker:
         self._handles = {}
         self._tool_set = None
 
-    def attach(self, app, adapter):
-        """The api_server platform handler: runs in connect(), before the router freezes."""
-        self._adapter = adapter
-        app.router.add_route("GET", ROUTE, self._handle_socket)
+    def unload(self):
+        """This load is going away: drop its tools' bookkeeping and close the console's socket.
+
+        The plugin manager disposes the registrations itself. Closing the socket fails the calls
+        waiting on it and makes the console dial again; its hello then reaches the next load's
+        broker, which registers the tools through its own context.
+        """
+        self._handles = {}
+        self._tool_set = None
+        loop, ws = self._loop, self._ws
+        self._ws = None
+        if loop is None or ws is None or ws.closed or loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(ws.close(code=1012, message=b"plugin reloaded"), loop)
+        except RuntimeError:
+            pass  # the loop is shutting down; the socket goes with it
 
     def _refusal(self, request):
         # Plugin routes get no auth from the adapter, so the route applies the adapter's own Bearer
@@ -63,7 +82,7 @@ class DeviceBroker:
         # the socket fails closed.
         from aiohttp import web
 
-        check = getattr(self._adapter, "_check_auth", None)
+        check = getattr(_state().adapter, "_check_auth", None)
         if check is None:
             return web.json_response({"error": {"message": "device socket auth is unavailable"}}, status=401)
         return check(request)
@@ -216,7 +235,34 @@ def _hello_tools(text):
     return sorted(tools, key=lambda t: t["name"])
 
 
+def _state():
+    """The state every load of this plugin shares: the live broker and the api_server adapter."""
+    state = sys.modules.get(STATE_MODULE)
+    if state is None:
+        state = types.ModuleType(STATE_MODULE)
+        state.broker = None
+        state.adapter = None
+        sys.modules[STATE_MODULE] = state
+    return state
+
+
+def _attach(app, adapter):
+    """The api_server platform handler: runs in connect(), before the router freezes."""
+    _state().adapter = adapter
+    app.router.add_route("GET", ROUTE, _serve_socket)
+
+
+async def _serve_socket(request):
+    return await _state().broker._handle_socket(request)
+
+
 def register(ctx):
     """Add the console's socket route to the api_server; the tools come with its hello."""
-    broker = DeviceBroker(ctx)
-    ctx.register_platform_handler("api_server", broker.attach)
+    state = _state()
+    previous, state.broker = state.broker, DeviceBroker(ctx)
+    if previous is not None:
+        # A reload whose unload callback has not run yet: the old socket would keep the console
+        # talking to a broker whose tools are gone.
+        previous.unload()
+    ctx.on_unload(state.broker.unload)
+    ctx.register_platform_handler("api_server", _attach)

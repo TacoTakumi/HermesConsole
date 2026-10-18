@@ -4,6 +4,7 @@ Run from the repo root: python3 -m pytest hermes-plugin/device_tools/test_device
 """
 
 import asyncio
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -45,6 +46,7 @@ class FakeCtx:
         self.registered = []
         self.disposed = []
         self.factories = []
+        self.unloads = []
 
     def register_tool(self, name, toolset, schema, handler, description="", **kwargs):
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler, "description": description}
@@ -53,6 +55,16 @@ class FakeCtx:
 
     def register_platform_handler(self, platform, factory):
         self.factories.append((platform, factory))
+
+    def on_unload(self, callback):
+        self.unloads.append(callback)
+
+    def unload(self):
+        # What the plugin manager does on unload: run the callbacks, dispose what it tracked.
+        for callback in reversed(self.unloads):
+            callback()
+        for name in list(self.tools):
+            FakeHandle(self, name).dispose()
 
 
 class FakeAdapter:
@@ -207,7 +219,7 @@ def test_registry_replaces_the_tools_when_a_hello_brings_another_set():
 
 
 def broker_of(ctx):
-    return ctx.factories[0][1].__self__
+    return sys.modules[device_tools.STATE_MODULE].broker
 
 
 async def in_worker(handler, args):
@@ -310,6 +322,44 @@ def test_disconnect_before_the_answer_returns_an_error_at_once():
             assert "disconnected" in result
             assert elapsed < 2.0
             assert broker_of(ctx)._pending == {}
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def fresh_module():
+    """The plugin as Hermes loads it on a reload: the same file, executed again as a new module."""
+    path = Path(device_tools.__file__)
+    spec = importlib.util.spec_from_file_location("device_tools_reloaded", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_reload_serves_the_new_broker_and_registers_the_tools_again():
+    async def scenario():
+        ctx1 = FakeCtx()
+        client = await start(ctx1)
+        try:
+            ws = await hello(client)
+
+            # Reload: the route stays (the router is frozen), the module and its ctx are new.
+            ctx2 = FakeCtx()
+            fresh_module().register(ctx2)
+            ctx1.unload()
+
+            msg = await ws.receive(timeout=2)
+            assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+
+            ws2 = await hello(client)
+            assert set(ctx2.tools) == {"list_apps", "launch_app"}
+            pending = asyncio.ensure_future(in_worker(ctx2.tools["list_apps"]["handler"], {}))
+            frame = await ws2.receive_json(timeout=2)
+            await ws2.send_json({"type": "result", "id": frame["id"], "result": "Calculator"})
+            result, _ = await pending
+            assert result == "Calculator"
+            await ws2.close()
         finally:
             await client.close()
 
