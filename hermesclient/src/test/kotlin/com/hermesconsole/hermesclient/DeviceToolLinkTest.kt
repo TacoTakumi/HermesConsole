@@ -243,6 +243,29 @@ class DeviceToolLinkTest {
     }
 
     @Test
+    fun `close while a waking reconnect waits on the lock opens nothing`() = runBlocking {
+        val dials = AtomicInteger()
+        val started = DeviceToolLink(
+            config = HermesConfig(host = "localhost", port = closedPort(), apiKey = TEST_KEY),
+            tools = tools,
+            http = refusingClient(dials),
+            reconnectDelayMs = 50,
+            maxReconnectDelayMs = 50,
+        ).also { link = it; it.connect() }
+        assertEquals(1, dials.get())
+
+        // Hold the link's lock past the reconnect delay, so the waking job blocks on it; close
+        // inside the hold, then let the job through.
+        synchronized(started) {
+            Thread.sleep(300)
+            started.close()
+        }
+        delay(300)
+
+        assertEquals(1, dials.get())
+    }
+
+    @Test
     fun `the default client pings the socket so a silently dead path is noticed`() {
         assertEquals(30_000, defaultDeviceHttp().pingIntervalMillis)
     }
