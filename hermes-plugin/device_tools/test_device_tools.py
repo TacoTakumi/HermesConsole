@@ -388,3 +388,24 @@ def test_unload_without_a_new_load_refuses_the_console_and_registers_nothing():
             await client.close()
 
     run(scenario())
+
+
+def test_hello_that_arrives_after_unload_is_closed_and_registers_nothing():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            # Connected while the plugin was live, but its hello lands after the unload.
+            ws = await client.ws_connect(device_tools.ROUTE, headers=AUTH)
+            await settle()
+            ctx.unload()
+            await ws.send_json({"type": "hello", "tools": TOOLS})
+
+            msg = await ws.receive(timeout=2)
+            assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+            assert ctx.tools == {}
+            assert ctx.registered == []
+        finally:
+            await client.close()
+
+    run(scenario())

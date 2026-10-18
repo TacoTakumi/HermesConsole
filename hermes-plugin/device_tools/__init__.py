@@ -111,6 +111,11 @@ class DeviceBroker:
         if tools is None:
             await ws.close(code=1008, message=b"bad hello")
             return ws
+        if _state().broker is not self:
+            # This load was unloaded while the hello was on its way: its context must not register
+            # anything. The console dials again and reaches the live load, if there is one.
+            await ws.close(code=1012, message=b"plugin reloaded")
+            return ws
 
         self._apply(tools)
         previous, self._ws = self._ws, ws
