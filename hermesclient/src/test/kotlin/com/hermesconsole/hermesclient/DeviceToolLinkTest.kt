@@ -2,6 +2,7 @@ package com.hermesconsole.hermesclient
 
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -142,6 +143,7 @@ class DeviceToolLinkTest {
         nextFrame() // hello
         val socket = nextSocket()
         socket.send("""{"type":"ready"}""")
+        assertEquals(claim(null), nextFrame())
 
         socket.send(call("c1", "launch_app", buildJsonObject { put("name", "Calculator") }))
 
@@ -186,16 +188,39 @@ class DeviceToolLinkTest {
     }
 
     @Test
-    fun `a socket a newer console replaced is not dialled again`() = runBlocking {
+    fun `after each ready it claims the current session and claims again on every change`() = runBlocking {
         upgrade()
         upgrade()
-        startLink()
-        nextFrame() // hello
+        val session = MutableStateFlow<String?>("s1")
+        link = DeviceToolLink(
+            config = server.hermesConfig(),
+            tools = tools,
+            http = http,
+            currentSession = session,
+            reconnectDelayMs = 50,
+            maxReconnectDelayMs = 200,
+        ).also { it.connect() }
+        assertEquals("hello", nextFrame()["type"]!!.jsonPrimitive.content)
+        val first = nextSocket()
+        first.send("""{"type":"ready"}""")
+        assertEquals(claim("s1"), nextFrame())
 
-        nextSocket().close(4000, "replaced")
-        delay(500)
+        session.value = "s2"
+        assertEquals(claim("s2"), nextFrame())
+        session.value = null
+        assertEquals(claim(null), nextFrame())
 
-        assertEquals(1, server.requestCount)
+        session.value = "s3"
+        assertEquals(claim("s3"), nextFrame())
+        first.close(1001, "gateway restarting")
+        assertEquals("hello", nextFrame()["type"]!!.jsonPrimitive.content)
+        nextSocket().send("""{"type":"ready"}""")
+        assertEquals(claim("s3"), nextFrame())
+    }
+
+    private fun claim(id: String?) = buildJsonObject {
+        put("type", "session")
+        put("id", id)
     }
 
     /** Runs each OkHttp call on the thread that enqueues it, so a refused dial fails inside dial(). */

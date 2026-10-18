@@ -6,11 +6,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -39,8 +43,11 @@ class DeviceTool(
  * tool and the answer goes back on the same socket with the call's id.
  *
  * Kept up until [close]: a dropped socket is dialled again with a capped backoff, and the hello
- * goes out again on every connect. The one exception is a newer console on the same profile
- * replacing this one: then the link stops. A wrong key is retried too - the console's other Hermes traffic
+ * goes out again on every connect.
+ *
+ * Several consoles can share one profile, so after each ready the link claims [currentSession] -
+ * the session the wall shows - and claims again on every change. The gateway sends a call only to
+ * the console that claimed the calling run's session. A wrong key is retried too - the console's other Hermes traffic
  * shows that fault, and a capped retry costs the gateway nothing.
  *
  * This is not conversation: turns stay on /v1/runs. The socket only carries tool calls the model
@@ -51,6 +58,7 @@ class DeviceToolLink(
     private val tools: List<DeviceTool>,
     private val http: OkHttpClient = defaultDeviceHttp(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val currentSession: StateFlow<String?> = MutableStateFlow(null),
     private val reconnectDelayMs: Long = 1_000,
     private val maxReconnectDelayMs: Long = 30_000,
 ) : AutoCloseable {
@@ -70,6 +78,9 @@ class DeviceToolLink(
 
     private var socket: WebSocket? = null
     private var reconnectJob: Job? = null
+
+    /** Sends the live socket's session claims; one per accepted socket. */
+    private var claimJob: Job? = null
     private var reconnectAttempt = 0
 
     /** Dial the gateway and keep the socket up until [close]. */
@@ -85,6 +96,8 @@ class DeviceToolLink(
         wantConnected = false
         reconnectJob?.cancel()
         reconnectJob = null
+        claimJob?.cancel()
+        claimJob = null
         socket?.close(NORMAL_CLOSURE, null)
         socket = null
         generation++
@@ -114,28 +127,25 @@ class DeviceToolLink(
 
     /**
      * The gateway accepted the hello. Only now does the backoff reset: a socket the gateway closes
-     * before ready (a refused hello) is a failed dial, not a success.
+     * before ready (a refused hello) is a failed dial, not a success. The socket then claims the
+     * current session, and every later one, until it drops.
      */
     @Synchronized
-    private fun accepted(dialGeneration: Long) {
-        if (dialGeneration == generation) reconnectAttempt = 0
-    }
-
-    /**
-     * A newer console on the same profile took the socket over. Dialling again would take it back
-     * and the two would take turns forever, so this link stops; a new console dials again.
-     */
-    @Synchronized
-    private fun replaced(dialGeneration: Long) {
+    private fun accepted(dialGeneration: Long, webSocket: WebSocket) {
         if (dialGeneration != generation) return
-        socket = null
-        wantConnected = false
+        reconnectAttempt = 0
+        claimJob?.cancel()
+        claimJob = scope.launch {
+            currentSession.collect { webSocket.send(sessionFrame(it)) }
+        }
     }
 
     @Synchronized
     private fun dropped(dialGeneration: Long) {
         if (dialGeneration != generation) return
         socket = null
+        claimJob?.cancel()
+        claimJob = null
         if (!wantConnected || reconnectJob?.isActive == true) return
         // Back off so a gateway that is down is not hammered, capped so a console that waited all
         // night is back within seconds of the gateway's return.
@@ -163,7 +173,7 @@ class DeviceToolLink(
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (stale()) return
             if (isReady(text)) {
-                accepted(dialGeneration)
+                accepted(dialGeneration, webSocket)
                 return
             }
             val call = parseCall(text) ?: return
@@ -172,7 +182,7 @@ class DeviceToolLink(
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(NORMAL_CLOSURE, null)
-            if (code == REPLACED_CLOSE) replaced(dialGeneration) else dropped(dialGeneration)
+            dropped(dialGeneration)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -199,9 +209,6 @@ class DeviceToolLink(
 
     private companion object {
         const val NORMAL_CLOSURE = 1000
-
-        /** The gateway's close code for a socket a newer console replaced (device_tools REPLACED_CLOSE). */
-        const val REPLACED_CLOSE = 4000
         const val MAX_BACKOFF_SHIFT = 16
     }
 }
@@ -220,6 +227,12 @@ internal data class DeviceToolSpec(val name: String, val description: String, va
 
 @Serializable
 internal data class DeviceHelloFrame(val type: String, val tools: List<DeviceToolSpec>)
+
+/** The claim of the session the wall shows; a null id claims none. */
+internal fun sessionFrame(id: String?): String = buildJsonObject {
+    put("type", "session")
+    put("id", id)
+}.toString()
 
 /** One answer. Exactly one of [result] and [error] is set; the other stays off the wire. */
 @Serializable
