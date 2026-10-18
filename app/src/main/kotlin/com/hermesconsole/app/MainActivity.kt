@@ -98,6 +98,9 @@ class MainActivity : ComponentActivity() {
     /** The live console (T-22): built once the mic grant lands and the backends are configured. */
     private val wallConsole = MutableStateFlow<WallConsole?>(null)
 
+    /** Whether this instance took the wall console slot; the debug path never does. */
+    private var claimedSlot = false
+
     /** The mic-less debug console (T-17), alive only for a debug launch. */
     private var debugConsole: DebugConsole? = null
 
@@ -134,6 +137,11 @@ class MainActivity : ComponentActivity() {
             startDebugConsole()
             return
         }
+
+        // One wall console per process: a HOME launch after a plain one makes a second instance
+        // despite singleTask. The newer instance wins, and the older one finishes and closes.
+        consoleSlot.claim(this) { finish() }
+        claimedSlot = true
 
         // The software AEC's native half, proven at boot (REQ-09): libwebrtc_apm must load and a
         // 16 kHz AEC3 APM must initialize on this device, and the verdict belongs on the record
@@ -424,6 +432,8 @@ class MainActivity : ComponentActivity() {
      * standing-by frame and the boot still logs its AEC verdict (REQ-02).
      */
     private fun startWallConsole() = lifecycleScope.launch {
+        // An older instance's console must close first, or two loops share the mic.
+        consoleSlot.awaitRetired()
         // The settings, live for the life of the console: the backends are fixed at assembly
         // (reconfiguring them is a relaunch), but the follow-up window is read through this at
         // every reply's end - the knob applies to the next exchange, no reinstall (REQ-40).
@@ -509,10 +519,14 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         debugConsole?.close()
         debugConsole = null
-        wallConsole.value?.close()
+        wallConsole.value?.let {
+            it.close()
+            Log.i(TAG, "wall console closed")
+        }
         wallConsole.value = null
         cuePlayer?.close()
         cuePlayer = null
+        if (claimedSlot) consoleSlot.release(this)
         super.onDestroy()
     }
 
@@ -533,6 +547,9 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "HermesConsole"
+
+        /** Process-wide: every MainActivity instance in the process shares it. */
+        val consoleSlot = ConsoleSlot()
 
         /**
          * The idle backlight (REQ-22): low enough to read as dark on the wall, high enough that
