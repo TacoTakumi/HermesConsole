@@ -14,9 +14,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * The two app tools the console runs for the model: list_apps shows exactly the drawer's list, and
+ * The app tools the console runs for the model: list_apps shows exactly the drawer's list, and
  * launch_app launches only on one clear match. Ambiguity and misses go back to the model as text,
- * with nothing launched, so it can ask or try again.
+ * with nothing launched, so it can ask or try again. return_home brings the console back to the
+ * front, and says so honestly: the app it leaves keeps running in the background.
  */
 class AppToolsTest {
 
@@ -36,7 +37,16 @@ class AppToolsTest {
 
     private val launched = mutableListOf<DrawerApp>()
 
-    private val tools = appTools(resolved = { resolved }, selfPackage = self, launch = { launched += it })
+    private var consoleInFront = false
+    private var broughtToFront = 0
+
+    private val tools = appTools(
+        resolved = { resolved },
+        selfPackage = self,
+        launch = { launched += it },
+        consoleInFront = { consoleInFront },
+        bringConsoleToFront = { broughtToFront++ },
+    )
 
     private fun tool(name: String): DeviceTool = tools.single { it.name == name }
 
@@ -48,10 +58,40 @@ class AppToolsTest {
     private fun labels(obj: JsonObject, key: String) = obj[key]!!.jsonArray.map { it.jsonPrimitive.content }
 
     @Test
-    fun `the console offers exactly list_apps and launch_app, launch_app requiring a name`() {
-        assertEquals(listOf("list_apps", "launch_app"), tools.map { it.name })
+    fun `the console offers exactly list_apps, launch_app and return_home, launch_app requiring a name`() {
+        assertEquals(listOf("list_apps", "launch_app", "return_home"), tools.map { it.name })
         val required = tool("launch_app").parameters["required"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf("name"), required)
+    }
+
+    @Test
+    fun `return_home takes no arguments and says it is the only way to close an app`() {
+        val home = tool("return_home")
+        assertTrue("required" !in home.parameters)
+        val description = home.description.lowercase()
+        listOf("console", "close", "background").forEach { assertTrue(it in description, "description names $it") }
+    }
+
+    @Test
+    fun `return_home with another app in front brings the console back once and says the app still runs`() {
+        consoleInFront = false
+
+        val result = run("return_home")
+
+        assertEquals(1, broughtToFront)
+        assertEquals("console", result["front"]!!.jsonPrimitive.content)
+        assertTrue("background" in result["note"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `return_home with the console already in front does nothing and says no app was in front`() {
+        consoleInFront = true
+
+        val result = run("return_home")
+
+        assertEquals(0, broughtToFront)
+        assertEquals("console", result["front"]!!.jsonPrimitive.content)
+        assertTrue("No app was in front" in result["note"]!!.jsonPrimitive.content)
     }
 
     @Test

@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.runtime.CompositionLocalProvider
 import com.hermesconsole.app.artifacts.ArtifactRouter
@@ -472,6 +473,13 @@ class MainActivity : ComponentActivity() {
                 resolved = { packageManager.launcherApps() },
                 selfPackage = packageName,
                 launch = { app -> withContext(Dispatchers.Main) { startActivity(app.launchIntent()) } },
+                consoleInFront = { lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) },
+                // singleTask: this brings the running console back, never a new one.
+                bringConsoleToFront = {
+                    withContext(Dispatchers.Main) {
+                        startActivity(Intent(this@MainActivity, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                },
             ),
             scope = lifecycleScope,
         )

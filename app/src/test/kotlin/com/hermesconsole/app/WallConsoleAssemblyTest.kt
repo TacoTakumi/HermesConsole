@@ -105,7 +105,13 @@ class WallConsoleAssemblyTest {
         }
     }
 
-    private val deviceTools = appTools(resolved = { emptyList() }, selfPackage = "com.hermesconsole", launch = {})
+    private val deviceTools = appTools(
+        resolved = { emptyList() },
+        selfPackage = "com.hermesconsole",
+        launch = {},
+        consoleInFront = { true },
+        bringConsoleToFront = {},
+    )
 
     /** A test that closes the console itself; teardown must not close it twice. */
     private var closedByTest = false

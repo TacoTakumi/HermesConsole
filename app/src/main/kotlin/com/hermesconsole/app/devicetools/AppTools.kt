@@ -25,11 +25,17 @@ private const val TAG = "DeviceTools"
  * launch_app launches only on one clear match ([matchApp]). Several matches or none go back to the
  * model as text with nothing launched: it can ask which one was meant, or call again with a label
  * from the list.
+ *
+ * return_home brings the console back to the front. Since Android 14 an app cannot end another
+ * app's processes, so this is all the console can do to close an app: the one it leaves stays
+ * cached in the background until Android ends it, and the reply says so.
  */
 fun appTools(
     resolved: () -> List<DrawerApp>,
     selfPackage: String,
     launch: suspend (DrawerApp) -> Unit,
+    consoleInFront: () -> Boolean,
+    bringConsoleToFront: suspend () -> Unit,
 ): List<DeviceTool> {
     fun apps() = launchableApps(resolved(), selfPackage)
 
@@ -90,7 +96,32 @@ fun appTools(
         reply.toString()
     }
 
-    return listOf(listApps, launchApp)
+    val returnHome = DeviceTool(
+        name = "return_home",
+        description = "Bring the console back to the front of the tablet. This is the only way to close an app " +
+            "on this tablet: the app it leaves keeps running in the background until Android ends it.",
+        parameters = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") {}
+        },
+    ) {
+        val reply = if (consoleInFront()) {
+            buildJsonObject {
+                put("front", "console")
+                put("note", "No app was in front. The console already is.")
+            }
+        } else {
+            bringConsoleToFront()
+            buildJsonObject {
+                put("front", "console")
+                put("note", "The console is in front. The app it left keeps running in the background until Android ends it.")
+            }
+        }
+        Log.i(TAG, "return_home -> $reply")
+        reply.toString()
+    }
+
+    return listOf(listApps, launchApp, returnHome)
 }
 
 /** What a spoken app name picks out of the drawer's list. */
