@@ -620,7 +620,6 @@ internal class WallConsole(
 
     private val voice = VoiceManagerClient(backends.voice)
     private val hermes = HermesClient(backends.hermes)
-    private val deviceLink = DeviceToolLink(backends.hermes, deviceTools)
 
     /**
      * The approval desk (T-27, REQ-14): raised off the loop's event tap, answered by touch on the
@@ -677,6 +676,12 @@ internal class WallConsole(
         restoreWall = router::restore,
         scope = scope,
     )
+
+    /**
+     * The device tool socket. It claims the session the wall shows, so the gateway sends this
+     * console the calls of its own conversation when other consoles share the profile.
+     */
+    private val deviceLink = DeviceToolLink(backends.hermes, deviceTools, currentSession = sessions.current)
 
     /** Where the next turn lands (REQ-23). Null until a session is entered - the first dispatch then makes one (REQ-06). */
     val currentSession: StateFlow<String?> get() = sessions.current
