@@ -69,7 +69,7 @@ class WebSocketTransportTest {
     /** A fake server that accepts the upgrade, then rejects the session with a 1008 close. */
     private fun authRejectingServer() = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            webSocket.close(1008, "invalid api_key")
+            webSocket.close(1008, "invalid token")
         }
     }
 

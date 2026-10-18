@@ -181,13 +181,19 @@ class VoiceManagerClient(
 
     @Synchronized
     private fun dial() {
+        val request = Request.Builder().url(config.streamUrl())
+        try {
+            request.header("Authorization", config.authorization)
+        } catch (_: IllegalArgumentException) {
+            // A key with a control or non-ASCII character cannot go on the wire at all. That is a bad
+            // credential like any other, not a crash in the caller's connect().
+            authFailed()
+            return
+        }
         generation++
         drainStaleState()
         _state.value = VoiceLinkState.Connecting
-        socket = http.newWebSocket(
-            Request.Builder().url(config.streamUrl()).header("Authorization", config.authorization).build(),
-            listenerFor(generation),
-        )
+        socket = http.newWebSocket(request.build(), listenerFor(generation))
     }
 
     /**

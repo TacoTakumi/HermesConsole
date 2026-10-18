@@ -176,7 +176,7 @@ class ReconnectTest {
         repeat(2) {
             authServer.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.close(1008, "invalid api_key")
+                    webSocket.close(1008, "invalid token")
                 }
             }))
         }
@@ -201,6 +201,24 @@ class ReconnectTest {
 
         client.close()
         authServer.shutdown()
+    }
+
+    @Test
+    fun `a key that cannot go in a header is an auth failure, not a crash`() = runBlocking {
+        // OkHttp refuses a header value with a control or non-ASCII character before any request.
+        for (key in listOf("vmp_made-up\nkey", "vmp_made-up-é")) {
+            val client = VoiceManagerClient(
+                VoiceManagerConfig(host = server.hostName, port = server.port, apiKey = key),
+                http,
+            )
+
+            client.connect()
+
+            assertEquals(VoiceLinkState.AuthFailed, client.state.value)
+            client.close()
+        }
+        delay(300) // a stray dial, if there were one, would have reached the server by now
+        assertEquals(0, server.requestCount)
     }
 
     /** A WebSocket that is already dead - stands in for the socket a stale callback arrives from. */
