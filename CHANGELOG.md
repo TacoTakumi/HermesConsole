@@ -32,9 +32,10 @@
   followed by the Home key started a second console in the same app. Now the
   newest console takes over and the older one closes first.
 - A Hermes key or VoiceManager token with a character that cannot go in an HTTP
-  header no longer crashes the console. The settings screen will not save it
-  and marks the field, the console comes up unconfigured, and the voice link
-  reports an auth failure.
+  header no longer crashes the console. The settings screen will not save
+  either one and marks the field. A stored Hermes key like that leaves the
+  console unconfigured. A stored VoiceManager token like that makes the voice
+  link report an auth failure.
 - The client configs no longer print the key in their text form.
 - The plugin config editor no longer adds a duplicate entry when
   plugins.enabled holds a comment at column 0, and refuses (asking for a hand
