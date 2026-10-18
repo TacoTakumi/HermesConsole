@@ -174,7 +174,7 @@ https://github.com/TacoTakumi/VoiceManager.
 - The console's default port for it is 8000.
 - It needs a per-user token (`vmp_...`). Make one on the VoiceManager host
   with `voicemanager user token add you my-console`, which prints the token
-  one time. Enter it in the key field of the VOICE MANAGER section on the
+  one time. Enter it in the TOKEN field of the VOICE MANAGER section on the
   console's settings screen, beside the host and port. The console sends it
   in an `Authorization: Bearer <token>` header.
 

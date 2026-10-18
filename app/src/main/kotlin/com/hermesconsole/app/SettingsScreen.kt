@@ -165,6 +165,7 @@ fun SettingsScreen(
                     onPort = { draft = draft.copy(vmPort = it) },
                     key = draft.vmKey,
                     onKey = { draft = draft.copy(vmKey = it) },
+                    keyLabel = "token",
                     modifier = Modifier.weight(1f),
                 )
                 // The console's own knobs, beside the backends they are not: how long a finished
@@ -249,6 +250,8 @@ private fun BackendColumn(
     key: String,
     onKey: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The gateway takes an API key; VoiceManager takes a per-user token. */
+    keyLabel: String = "api key",
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(LcarsMetrics.Gap * 2)) {
         BasicText(title, style = LcarsTheme.typography.header.copy(color = LcarsColors.IceBlue))
@@ -263,7 +266,7 @@ private fun BackendColumn(
         // Masked on screen and Password to the IME: the key is typed in, never echoed back, and
         // never offered to the keyboard's learning or suggestions (REQ-28).
         SettingsField(
-            label = "api key",
+            label = keyLabel,
             value = key,
             onValueChange = onKey,
             keyboardType = KeyboardType.Password,
