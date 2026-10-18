@@ -20,6 +20,10 @@ data class HermesConfig(
         require(port in 1..65_535) { "port must be a valid TCP port" }
         // Blank would go out as a bare "Bearer " and come back 401. Say so here, not three hops later.
         require(apiKey.isNotBlank()) { "apiKey must not be blank" }
+        // OkHttp's header value rule. Past it, every request would throw from Request.Builder instead.
+        require(apiKey.all { it == '\t' || it in ' '..'~' }) {
+            "apiKey must be printable ASCII to go in an HTTP header"
+        }
     }
 
     /** The bearer credential, formatted for the wire. Never logged, never in an exception message. */

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 /** A config ends up in log lines and exception messages; its toString must never carry the key. */
 class HermesConfigTest {
@@ -19,6 +20,22 @@ class HermesConfigTest {
         assertTrue(text.contains("8643"), text)
         assertTrue(text.contains("***"), text)
         assertFalse(text.contains(key), text)
+    }
+
+    @Test
+    fun `a key that cannot go in a header is refused without quoting it`() {
+        for (bad in listOf("made-up\nkey", "made-up-\u00e9")) {
+            val error = assertThrows<IllegalArgumentException> {
+                HermesConfig(host = "gateway.local", port = 8643, apiKey = bad)
+            }
+            assertFalse(error.message.orEmpty().contains(bad), error.message)
+        }
+    }
+
+    @Test
+    fun `printable ASCII and tab are a usable key`() {
+        HermesConfig(host = "gateway.local", port = 8643, apiKey = "made-up ~key!")
+        HermesConfig(host = "gateway.local", port = 8643, apiKey = "made-up\tkey")
     }
 
     @Test
