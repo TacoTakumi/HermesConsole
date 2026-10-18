@@ -27,8 +27,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HERMES_SSH="${HERMES_SSH:?set HERMES_SSH to the gateway host ssh login, e.g. you@gateway}"
-HERMES_HOME_DIR="${HERMES_HOME_DIR:-.hermes}" # relative to the gateway user's $HOME
-HERMES_SERVICE="${HERMES_SERVICE:-hermes-gateway.service}"
+# No defaults for these two: a default would be the default profile, and device_tools there would
+# hand the console's device tools to every Hermes session.
+HERMES_HOME_DIR="${HERMES_HOME_DIR:?set HERMES_HOME_DIR to the console profile home, relative to the gateway user home, e.g. .hermes/profiles/console}"
+HERMES_SERVICE="${HERMES_SERVICE:?set HERMES_SERVICE to the gateway unit that serves that profile, e.g. hermes-gateway-console.service}"
 HERMES_URL="${HERMES_URL:-http://127.0.0.1:8642}"
 HERMES_KEY_FILE="${HERMES_KEY_FILE:-$HOME/.hermes/api_server.env}"
 

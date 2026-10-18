@@ -110,7 +110,9 @@ out of your other Hermes sessions.
      with a changing address. The tools the console declares there
      (`list_apps` and `launch_app`) appear in this profile only.
 
-   `HERMES_HOME_DIR` is relative to the gateway user's home. The script reads
+   `HERMES_HOME_DIR` is relative to the gateway user's home. The script stops
+   when `HERMES_HOME_DIR` or `HERMES_SERVICE` is not set, so it never installs
+   the device tools in your default profile by mistake. The script reads
    the key from `HERMES_KEY_FILE` (default `~/.hermes/api_server.env`, a
    `KEY=` line) for its live check.
 
