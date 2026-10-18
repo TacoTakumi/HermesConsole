@@ -143,3 +143,28 @@ def test_a_column_0_comment_inside_enabled_does_not_hide_later_items(tmp_path):
 def test_a_column_0_comment_before_enabled_does_not_hide_the_key(tmp_path):
     config(tmp_path, "plugins:\n# the console's plugins\n  enabled:\n    - device_tools\n")
     assert run(tmp_path, "check", "device_tools").returncode == 0
+
+
+# plugins.enabled shapes that are not a list of names. enable must refuse them rather than splice a
+# list item into a mapping, and nothing in them may read as a plugin name.
+NOT_A_LIST = {
+    "mapping": "plugins:\n  enabled:\n    foo: 1\n  disabled: []\n",
+    "item with nested keys": "plugins:\n  enabled:\n    - name: x\n      opt: 1\n",
+    "indentless item with nested keys": "plugins:\n  enabled:\n  - name: x\n    opt: 1\n",
+    "single-key item": "plugins:\n  enabled:\n    - name: x\n",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(NOT_A_LIST))
+def test_an_enabled_that_is_not_a_list_of_names_is_refused(tmp_path, shape):
+    text = NOT_A_LIST[shape]
+    path = config(tmp_path, text)
+
+    for name in ("device_tools", "x", "name: x", "foo"):
+        assert run(tmp_path, "check", name).returncode == 1, name
+
+    result = run(tmp_path, "enable", "device_tools")
+    assert result.returncode != 0
+    assert "by hand" in result.stderr
+    assert path.read_text() == text
+    assert not list(path.parent.glob("config.yaml.bak.*"))

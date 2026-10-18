@@ -42,15 +42,28 @@ def enabled_list(lines):
     if value == "":
         found["kind"] = "block"
         for i in range(key + 1, end):
-            item = re.match(r"^(\s{2,})-\s*(.*?)\s*(#.*)?$", lines[i].rstrip("\n"))
+            line = lines[i].rstrip("\n")
+            item = re.match(r"^(\s{2,})-\s*(.*?)\s*(#.*)?$", line)
             if item:
+                # "- name: x" is a mapping item, not a plugin name.
+                if re.search(r":(\s|$)", item.group(2)) and not item.group(2).startswith(("'", '"')):
+                    found["kind"] = "unknown"
+                    break
                 if not found["items"]:
                     found["indent"] = item.group(1)
                 found["items"].append(i)
                 found["names"].append(item.group(2).strip("'\""))
-            elif lines[i].strip() and not lines[i].lstrip().startswith("#"):
+            elif not line.strip() or line.lstrip().startswith("#"):
+                continue
+            elif len(line) - len(line.lstrip()) > 2:
+                # Deeper than the enabled key and not an item: a mapping, or an item's nested keys.
+                found["kind"] = "unknown"
                 break
-        if not found["items"]:
+            else:
+                break
+        if found["kind"] == "unknown":
+            found["names"], found["items"] = [], []
+        elif not found["items"]:
             found["kind"] = "empty"
     elif value in ("null", "~", "[]"):
         found["kind"] = "empty"
