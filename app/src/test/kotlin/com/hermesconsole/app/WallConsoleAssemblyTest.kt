@@ -233,12 +233,12 @@ class WallConsoleAssemblyTest {
         }
 
     @Test
-    fun `the console opens its device socket with both app tools and closes it with itself`(): Unit =
+    fun `the console opens its device socket with its app tools and closes it with itself`(): Unit =
         runBlocking {
             val hello = withTimeout(10_000) { Json.parseToJsonElement(deviceFrames.receive()).jsonObject }
             assertEquals("hello", hello["type"]!!.jsonPrimitive.content)
             assertEquals(
-                listOf("list_apps", "launch_app"),
+                listOf("list_apps", "launch_app", "return_home"),
                 hello["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
             )
 
