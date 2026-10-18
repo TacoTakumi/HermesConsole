@@ -4,7 +4,7 @@ This is the exact audio the console will emit (the live TTS engine, at the rate 
 the wire), so the hardware gate (T-04) measures the real failure mode rather than a stand-in tone.
 The output is a build input for the instrumented gate, not a source file - it is gitignored.
 
-    VM_API_KEY=... python3 scripts/make-aec-speech.py [--host localhost] [--port 8000]
+    VM_TOKEN=... python3 scripts/make-aec-speech.py [--host localhost] [--port 8000]
 """
 import argparse
 import asyncio
@@ -27,7 +27,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 # Never compiled in, never logged (REQ-28).
-API_KEY = os.environ["VM_API_KEY"]
+TOKEN = os.environ["VM_TOKEN"]
 TARGET_SECONDS = 62
 
 # Continuous, varied speech: plosives and sibilants are the parts an echo canceller struggles with.
@@ -46,7 +46,7 @@ SENTENCES = [
 
 
 async def main() -> None:
-    async with VoiceManagerClient(host=args.host, port=args.port, api_key=API_KEY) as client:
+    async with VoiceManagerClient(host=args.host, port=args.port, token=TOKEN) as client:
         pcm = bytearray()
         rate = None
         i = 0

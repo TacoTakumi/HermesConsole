@@ -66,7 +66,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * logged). They come from the console's settings store (T-41: an arg-passed key is logged by
  * adbd); vmKey=/hermesKey= and the host arguments still override, for scratch backends:
  *
- *     VM_API_KEY=... python3 scripts/make-bargein-speech.py --host 127.0.0.1
+ *     VM_TOKEN=... python3 scripts/make-bargein-speech.py --host 127.0.0.1
  *     scripts/connected-test.sh BargeInTurnTest
  *
  * The wire log the acceptance asks for is the run's logcat (`adb logcat -s VoiceLoop BargeInTurn`),
@@ -309,7 +309,7 @@ class BargeInTurnTest {
         throw AssertionError(
             "Missing the speech fixture app/src/androidTest/assets/$name. It is a build input, not " +
                 "a source file - synthesise it against a running VoiceManager:\n" +
-                "    VM_API_KEY=... python3 scripts/make-bargein-speech.py --host <vm-host>",
+                "    VM_TOKEN=... python3 scripts/make-bargein-speech.py --host <vm-host>",
             e,
         )
     }

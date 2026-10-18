@@ -15,7 +15,7 @@ The output is a build input for the instrumented test, not a source file - it is
 Run it with VoiceManager's own interpreter: it imports VoiceManager's async client, which the system
 python does not have the dependencies for.
 
-    VOICEMANAGER_SRC=/home/you/VoiceManager/src VM_API_KEY=... /home/you/VoiceManager/venv/bin/python \
+    VOICEMANAGER_SRC=/home/you/VoiceManager/src VM_TOKEN=... /home/you/VoiceManager/venv/bin/python \
         scripts/make-bargein-speech.py [--host localhost] [--port 8000]
 """
 import argparse
@@ -42,7 +42,7 @@ parser.add_argument("--only", help="synthesize just this fixture, leaving the ot
 args = parser.parse_args()
 
 # Never compiled in, never logged (REQ-28).
-API_KEY = os.environ["VM_API_KEY"]
+TOKEN = os.environ["VM_TOKEN"]
 
 CAPTURE_RATE = 16_000
 
@@ -119,7 +119,7 @@ def normalize(samples: np.ndarray) -> bytes:
 
 async def main() -> None:
     os.makedirs(os.path.abspath(args.out_dir), exist_ok=True)
-    async with VoiceManagerClient(host=args.host, port=args.port, api_key=API_KEY) as client:
+    async with VoiceManagerClient(host=args.host, port=args.port, token=TOKEN) as client:
         for name, text in UTTERANCES.items():
             if args.only and name != args.only:
                 continue

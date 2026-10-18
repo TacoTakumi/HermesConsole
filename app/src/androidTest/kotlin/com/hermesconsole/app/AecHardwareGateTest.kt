@@ -82,7 +82,7 @@ class AecHardwareGateTest {
             throw AssertionError(
                 "Missing the speech fixture app/src/androidTest/assets/$TTS_FILE. " +
                     "Generate it against a running VoiceManager: " +
-                    "VM_API_KEY=... python3 scripts/make-aec-speech.py",
+                    "VM_TOKEN=... python3 scripts/make-aec-speech.py",
             )
         }
 

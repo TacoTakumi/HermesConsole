@@ -312,7 +312,7 @@ class ScreenOffTurnTest {
             "Missing the speech fixture app/src/androidTest/assets/$name. It is a build input, " +
                 "not a source file:\n" +
                 "    python3 scripts/make-screenoff-fixture.py   (wake phrase; needs no backend)\n" +
-                "    VM_API_KEY=... python3 scripts/make-bargein-speech.py --only $QUESTION_FILE",
+                "    VM_TOKEN=... python3 scripts/make-bargein-speech.py --only $QUESTION_FILE",
             e,
         )
     }
