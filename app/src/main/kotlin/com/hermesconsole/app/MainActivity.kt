@@ -475,12 +475,16 @@ class MainActivity : ComponentActivity() {
             ),
             scope = lifecycleScope,
         )
-        withContext(Dispatchers.IO) {
-            // The AEC verdict, on the record every boot (REQ-02) - logged where the pipeline is
-            // built, from the very capture session the loop will run on.
-            Log.i(TAG, "input devices: ${mic.availableDevices()}")
-            Log.i(TAG, mic.start().describe())
-            console.start()
+        // Through the slot: if a newer instance evicts this one mid-start, the half-started console
+        // is closed here before the newer one may build its own.
+        consoleSlot.startOwned(this@MainActivity, console) {
+            withContext(Dispatchers.IO) {
+                // The AEC verdict, on the record every boot (REQ-02) - logged where the pipeline is
+                // built, from the very capture session the loop will run on.
+                Log.i(TAG, "input devices: ${mic.availableDevices()}")
+                Log.i(TAG, mic.start().describe())
+                console.start()
+            }
         }
         wallConsole.value = console
     }
