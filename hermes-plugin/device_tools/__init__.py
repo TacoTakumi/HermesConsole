@@ -63,8 +63,12 @@ class DeviceBroker:
 
         The plugin manager disposes the registrations itself. Closing the socket fails the calls
         waiting on it and makes the console dial again; its hello then reaches the next load's
-        broker, which registers the tools through its own context.
+        broker, which registers the tools through its own context. With no next load (the
+        plugin was disabled) the route has no broker and refuses the console.
         """
+        state = _state()
+        if state.broker is self:
+            state.broker = None
         self._handles = {}
         self._tool_set = None
         loop, ws = self._loop, self._ws
@@ -253,7 +257,13 @@ def _attach(app, adapter):
 
 
 async def _serve_socket(request):
-    return await _state().broker._handle_socket(request)
+    from aiohttp import web
+
+    broker = _state().broker
+    if broker is None:
+        # The plugin was unloaded and the frozen router cannot drop the route.
+        return web.json_response({"error": {"message": "device tools are not loaded"}}, status=503)
+    return await broker._handle_socket(request)
 
 
 def register(ctx):

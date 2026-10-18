@@ -344,10 +344,11 @@ def test_reload_serves_the_new_broker_and_registers_the_tools_again():
         try:
             ws = await hello(client)
 
-            # Reload: the route stays (the router is frozen), the module and its ctx are new.
+            # Reload, in Hermes' order: unload the old load, then load the file again as a new
+            # module with a new ctx. The route stays (the router is frozen).
+            ctx1.unload()
             ctx2 = FakeCtx()
             fresh_module().register(ctx2)
-            ctx1.unload()
 
             msg = await ws.receive(timeout=2)
             assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
@@ -360,6 +361,29 @@ def test_reload_serves_the_new_broker_and_registers_the_tools_again():
             result, _ = await pending
             assert result == "Calculator"
             await ws2.close()
+        finally:
+            await client.close()
+
+    run(scenario())
+
+
+def test_unload_without_a_new_load_refuses_the_console_and_registers_nothing():
+    async def scenario():
+        ctx = FakeCtx()
+        client = await start(ctx)
+        try:
+            ws = await hello(client)
+
+            # The plugin is disabled: unloaded, and not loaded again.
+            ctx.unload()
+
+            msg = await ws.receive(timeout=2)
+            assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED)
+            with pytest.raises(aiohttp.WSServerHandshakeError) as err:
+                await client.ws_connect(device_tools.ROUTE, headers=AUTH)
+            assert err.value.status == 503
+            assert ctx.tools == {}
+            assert ctx.registered == ["launch_app", "list_apps"]
         finally:
             await client.close()
 
