@@ -44,6 +44,9 @@ class ConsoleSlot {
             // after closing the console it was starting.
             if (holder in building) {
                 releaseAfterBuild += holder
+                // It is already going; asking it again would reach whatever now shares its identity
+                // (a recreated activity keeps the old one's token, so finish() would end the new one).
+                if (owner === holder) evictOwner = null
                 return
             }
             if (owner === holder) {

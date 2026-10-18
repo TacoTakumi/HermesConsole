@@ -132,4 +132,33 @@ class ConsoleSlotTest {
         assertTrue(events.isEmpty(), "closing a published console is onDestroy's job")
         assertEquals(FakeConsole::class, console::class)
     }
+
+    @Test
+    fun `a holder released mid-build is never asked to evict`() = runTest {
+        // A config-change recreation: the old instance is destroyed mid-build, and the new one
+        // shares its activity token, so the old evict lambda would finish the new activity.
+        val slot = ConsoleSlot()
+        val events = mutableListOf<String>()
+        var evictions = 0
+        val starting = CompletableDeferred<Unit>()
+        slot.claim(older) { evictions++ }
+        val build = launch {
+            slot.startOwned(older, FakeConsole(events)) {
+                starting.complete(Unit)
+                CompletableDeferred<Unit>().await()
+            }
+        }
+        starting.await()
+        slot.release(older)
+
+        slot.claim(newer) {}
+        val waited = async { slot.awaitRetired(); events += "newer starts" }
+        repeat(3) { yield() }
+
+        assertEquals(0, evictions)
+        assertFalse(waited.isCompleted, "the half-built console is still running")
+        build.cancel()
+        waited.await()
+        assertEquals(listOf("closed", "newer starts"), events)
+    }
 }
