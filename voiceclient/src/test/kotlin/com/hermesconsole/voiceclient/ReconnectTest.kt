@@ -206,7 +206,7 @@ class ReconnectTest {
     @Test
     fun `a key that cannot go in a header is an auth failure, not a crash`() = runBlocking {
         // OkHttp refuses a header value with a control or non-ASCII character before any request.
-        for (key in listOf("vmp_made-up\nkey", "vmp_made-up-é")) {
+        for (key in listOf("vmp_made-up\nkey", "vmp_made-up-\u00e9")) {
             val client = VoiceManagerClient(
                 VoiceManagerConfig(host = server.hostName, port = server.port, apiKey = key),
                 http,
