@@ -36,8 +36,19 @@ class InfoTest {
     private fun config() = VoiceManagerConfig(
         host = server.hostName,
         port = server.port,
-        apiKey = "unused-by-info",
+        apiKey = "vmp_test-token",
     )
+
+    @Test
+    fun `the info fetch sends the token as a Bearer header and nothing in the URL`() = runTest {
+        server.enqueue(MockResponse().setBody("{}"))
+
+        fetchVoiceManagerInfo(config())
+
+        val request = server.takeRequest()
+        assertEquals("/info", request.path)
+        assertEquals("Bearer vmp_test-token", request.getHeader("Authorization"))
+    }
 
     @Test
     fun `the info fetch reads engines and models out of the server's own payload shape`() = runTest {

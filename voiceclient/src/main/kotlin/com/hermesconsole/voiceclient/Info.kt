@@ -40,7 +40,7 @@ suspend fun fetchVoiceManagerInfo(
     config: VoiceManagerConfig,
     http: OkHttpClient = sharedInfoClient,
 ): VoiceManagerInfo = withContext(Dispatchers.IO) {
-    val request = Request.Builder().url(config.infoUrl()).get().build()
+    val request = Request.Builder().url(config.infoUrl()).header("Authorization", config.authorization).get().build()
     val call = http.newCall(request)
     call.timeout().timeout(INFO_DEADLINE_MS, TimeUnit.MILLISECONDS)
     call.execute().use { response ->
@@ -49,7 +49,7 @@ suspend fun fetchVoiceManagerInfo(
     }
 }
 
-/** /info is unauthenticated (the key guards uploads, not readouts), so the URL carries no query. */
+/** /info needs the token like every VoiceManager call but /health; it goes in the header, not here. */
 internal fun VoiceManagerConfig.infoUrl(): HttpUrl = HttpUrl.Builder()
     .scheme(if (tls) "https" else "http")
     .host(host)
