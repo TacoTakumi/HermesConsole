@@ -1,6 +1,6 @@
 package com.hermesconsole.app.tools
 
-import kotlinx.serialization.json.Json
+import com.hermesconsole.hermesclient.parseJsonContainer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -57,12 +57,6 @@ object ToolResultReader {
      */
     private val TEXT_KEYS = listOf("output", "stdout", "text", "content", "message", "error")
 
-    /** A lenient parser for the un-double-encode step; unknown keys and loose input are tolerated. */
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
-
     fun read(result: JsonElement?, isError: Boolean): ToolResultDisplay {
         val body = try {
             extractText(result, isError).trim()
@@ -100,7 +94,7 @@ object ToolResultReader {
 
     /** A string value: itself JSON (un-double-encode) or plain text (verbatim). */
     private fun fromString(text: String, isError: Boolean): String {
-        val nested = parseContainer(text)
+        val nested = parseJsonContainer(text)
         return if (nested != null) extractText(nested, isError) else text
     }
 
@@ -129,17 +123,6 @@ object ToolResultReader {
         is JsonNull -> null
         is JsonPrimitive -> value.content.takeUnless { it.isBlank() }
         else -> null
-    }
-
-    /** Parse [text] only when it is a JSON object or array; a bare scalar is not "itself JSON". */
-    private fun parseContainer(text: String): JsonElement? {
-        val trimmed = text.trimStart()
-        if (trimmed.isEmpty() || (trimmed[0] != '{' && trimmed[0] != '[')) return null
-        return try {
-            json.parseToJsonElement(text).takeIf { it is JsonObject || it is JsonArray }
-        } catch (_: Throwable) {
-            null
-        }
     }
 
     private val WHITESPACE = Regex("\\s+")
