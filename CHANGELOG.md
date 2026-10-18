@@ -2,6 +2,13 @@
 
 ## [0.3.0]
 
+### Added
+
+- Device tool return_home: brings the console back to the front, for "close
+  the calculator" or "go back to the console". Android 14 and later let no app
+  end another app, so the app it leaves keeps running in the background, and
+  the tool tells the model so.
+
 ### Changed
 
 - Breaking: several consoles can share one Hermes profile, each with its own

@@ -115,9 +115,12 @@ out of your other Hermes sessions.
    - `device_tools` adds the `/v1/device/ws` socket. The console connects to
      it, so the gateway never has to reach the tablet, also behind a VPN or
      with a changing address. The tools the console declares there
-     (`list_apps` and `launch_app`) appear in this profile only. Several
-     consoles can share the profile: a tool call goes to the console that
-     shows the conversation that made it.
+     (`list_apps`, `launch_app` and `return_home`) appear in this profile
+     only. `return_home` brings the console back to the front. Android 14
+     and later let no app end another app, so this is how the console closes
+     an app: the app keeps running in the background until Android ends it.
+     Several consoles can share the profile: a tool call goes to the console
+     that shows the conversation that made it.
 
    `HERMES_HOME_DIR` is relative to the gateway user's home. The script stops
    when `HERMES_HOME_DIR`, `HERMES_SERVICE` or `HERMES_URL` is not set. All
