@@ -178,6 +178,14 @@ class AppConfigTest {
     }
 
     @Test
+    fun `a stored Hermes key that cannot go in a header dials nothing`() {
+        // HermesConfig refuses such a key too, so the check has to happen before construction.
+        assertNull(everything.copy(hermesKey = "made-up\nkey").toBackends())
+        assertNull(everything.copy(hermesKey = "made-up-\u00e9").toBackends())
+        assertNotNull(everything.copy(hermesKey = "made-up ~key!").toBackends())
+    }
+
+    @Test
     fun `port text parses only as a real tcp port`() {
         // The settings screen edits ports as text; this is the one place the text becomes a port.
         assertEquals(8642, parsePort("8642"))

@@ -60,6 +60,8 @@ data class BackendSettings(
     fun toBackends(): DebugBackends? {
         if (hermesHost.isBlank() || hermesKey.isBlank() || vmHost.isBlank() || vmKey.isBlank()) return null
         if (hermesPort !in VALID_PORTS || vmPort !in VALID_PORTS) return null
+        // The voice client turns an unusable token into AuthFailed itself; HermesConfig throws.
+        if (!isHeaderSafe(hermesKey)) return null
         return DebugBackends(
             hermes = HermesConfig(host = hermesHost, port = hermesPort, apiKey = hermesKey),
             voice = VoiceManagerConfig(
@@ -121,6 +123,9 @@ data class BackendSettings(
 
 /** The settings screen edits ports as text; this is the one place that text becomes a port. */
 internal fun parsePort(text: String): Int? = text.toIntOrNull()?.takeIf { it in 1..65_535 }
+
+/** OkHttp's header value rule: a key outside it makes every request throw before it is sent. */
+internal fun isHeaderSafe(key: String): Boolean = key.all { it == '\t' || it in ' '..'~' }
 
 /**
  * The follow-up window as the settings screen edits it: whole seconds, at least one, and capped
