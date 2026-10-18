@@ -53,6 +53,9 @@ data class HermesConfig(
 
     internal fun approvalUrl(runId: String): HttpUrl = runUrl(runId, "approval")
 
+    /** The device tool socket: tool calls inside a /v1/runs turn, not a second conversation surface. */
+    internal fun deviceSocketUrl(): HttpUrl = base().addPathSegments("v1/device/ws").build()
+
     private fun runUrl(runId: String, verb: String): HttpUrl = base()
         .addPathSegments("v1/runs")
         .addPathSegment(runId)
