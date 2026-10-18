@@ -1,0 +1,4 @@
+name: device_tools
+description: "HermesConsole device tools - the wall console dials in over a WebSocket, declares its tools, and runs each call on the tablet"
+version: "1.0.0"
+author: "rob"
