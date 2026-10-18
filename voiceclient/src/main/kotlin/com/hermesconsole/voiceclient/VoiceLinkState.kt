@@ -18,7 +18,7 @@ sealed interface VoiceLinkState {
     data class Dropped(val code: Int?, val reason: String?) : VoiceLinkState
 
     /**
-     * VoiceManager rejected the api_key. Terminal and visible (REQ-06): a bad credential is a
+     * VoiceManager rejected the token. Terminal and visible (REQ-06): a bad credential is a
      * human's problem, and retrying it just hammers the server with the same wrong key.
      */
     data object AuthFailed : VoiceLinkState

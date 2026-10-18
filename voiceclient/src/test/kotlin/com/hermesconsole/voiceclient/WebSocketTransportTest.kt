@@ -1,6 +1,7 @@
 package com.hermesconsole.voiceclient
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
@@ -19,10 +20,10 @@ import org.junit.jupiter.api.Test
 /**
  * T-06 / REQ-06: the wire contract with VoiceManager's /ws/stream, asserted against a fake server.
  *
- * What a passing run proves: the connect URL carries the api_key; outbound audio is raw 16 kHz mono
- * 16-bit little-endian PCM chunked to the configured size with no container header; and a server
- * that closes with 1008 before accept lands the client in a terminal AUTH_FAILED state instead of
- * a reconnect loop.
+ * What a passing run proves: the upgrade carries the token as a Bearer header and the URL carries
+ * no credential; outbound audio is raw 16 kHz mono 16-bit little-endian PCM chunked to the
+ * configured size with no container header; and a rejected token - an HTTP 403 on the upgrade, or
+ * a 1008 close - lands the client in a terminal AUTH_FAILED state instead of a reconnect loop.
  */
 class WebSocketTransportTest {
 
@@ -73,7 +74,7 @@ class WebSocketTransportTest {
     }
 
     @Test
-    fun `connects to ws stream with the api_key query parameter`() = runBlocking {
+    fun `connects to ws stream with the token as a Bearer header and nothing in the URL`() = runBlocking {
         server.enqueue(MockResponse().withWebSocketUpgrade(acceptingServer()))
         val client = VoiceManagerClient(configFor(server), http)
 
@@ -81,8 +82,24 @@ class WebSocketTransportTest {
         client.awaitState<VoiceLinkState.Connected>()
 
         val request = server.takeRequest()
-        assertEquals("/ws/stream?api_key=s3cret", request.path)
+        assertEquals("/ws/stream", request.path)
+        assertEquals("Bearer s3cret", request.getHeader("Authorization"))
 
+        client.close()
+    }
+
+    @Test
+    fun `an HTTP 403 on the upgrade is terminal AUTH_FAILED, not a reconnect loop`() = runBlocking {
+        // VoiceManager checks the token before it accepts the upgrade: a bad one is a 403, no socket.
+        server.enqueue(MockResponse().setResponseCode(403))
+        server.enqueue(MockResponse().setResponseCode(403))
+        val client = VoiceManagerClient(configFor(server), http)
+
+        client.connect()
+        client.awaitState<VoiceLinkState.AuthFailed>()
+        delay(1_500) // past the first reconnect delay
+
+        assertEquals(1, server.requestCount)
         client.close()
     }
 

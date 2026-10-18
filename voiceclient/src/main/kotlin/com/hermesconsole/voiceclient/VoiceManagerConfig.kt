@@ -12,6 +12,7 @@ import okhttp3.HttpUrl
 data class VoiceManagerConfig(
     val host: String,
     val port: Int,
+    /** The console's VoiceManager token (vmp_...), sent only as a Bearer header, never in a URL. */
     val apiKey: String,
     /** 16 kHz is what the wire takes; the capture path resamples to it, not us. */
     val sampleRate: Int = 16_000,
@@ -32,15 +33,14 @@ data class VoiceManagerConfig(
     /** Bytes on the wire per frame: 16-bit mono. */
     val chunkBytes: Int get() = chunkSamples * 2
 
-    /**
-     * Built through [HttpUrl] so a key containing '&' or '#' is escaped rather than truncating the
-     * query. OkHttp dials ws:// over the http scheme, so http/https is the right scheme here.
-     */
+    /** The token, formatted for the Authorization header. Never logged. */
+    internal val authorization: String get() = "Bearer $apiKey"
+
+    /** OkHttp dials ws:// over the http scheme, so http/https is the right scheme here. */
     internal fun streamUrl(): HttpUrl = HttpUrl.Builder()
         .scheme(if (tls) "https" else "http")
         .host(host)
         .port(port)
         .addPathSegments("ws/stream")
-        .addQueryParameter("api_key", apiKey)
         .build()
 }

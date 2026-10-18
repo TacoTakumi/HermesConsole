@@ -185,7 +185,7 @@ class VoiceManagerClient(
         drainStaleState()
         _state.value = VoiceLinkState.Connecting
         socket = http.newWebSocket(
-            Request.Builder().url(config.streamUrl()).build(),
+            Request.Builder().url(config.streamUrl()).header("Authorization", config.authorization).build(),
             listenerFor(generation),
         )
     }
@@ -271,9 +271,10 @@ class VoiceManagerClient(
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(NORMAL_CLOSURE, null)
             if (stale()) return
-            // VoiceManager rejects a bad api_key by accepting the upgrade and then closing the
-            // session with a policy violation - so authentication failure arrives here, not as an
-            // HTTP error. Everything else (including the 1001 inactivity close) is a reconnect.
+            // VoiceManager rejects a bad token before it accepts the upgrade, which arrives in
+            // onFailure as an HTTP 403. A policy-violation close is kept as the same verdict for a
+            // server that closes instead. Everything else (including the 1001 inactivity close)
+            // is a reconnect.
             if (code == POLICY_VIOLATION) authFailed()
             else dropped(VoiceLinkState.Dropped(code, reason))
         }
