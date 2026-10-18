@@ -52,9 +52,9 @@ AudioProcessing library. To rebuild it from the pinned WebRTC revision, see
 ## Setup
 
 1. Launch the console and open its settings screen. Set the Hermes gateway
-   host, port and API key, and the VoiceManager host, port and API key. The
-   default hosts are `127.0.0.1`, which on the tablet is the tablet itself,
-   so both must be set.
+   host, port and API key, and the VoiceManager host, port and token (see
+   "VoiceManager" below). The default hosts are `127.0.0.1`, which on the
+   tablet is the tablet itself, so both must be set.
 2. For unattended use, exempt the app from battery optimization:
 
        adb shell dumpsys deviceidle whitelist +com.hermesconsole
@@ -172,8 +172,11 @@ https://github.com/TacoTakumi/VoiceManager.
 - The console talks to it over one WebSocket, `/ws/stream`, sending 16 kHz
   mono 16-bit audio and receiving transcripts and reply audio.
 - The console's default port for it is 8000.
-- It needs an API key, which you set on the console's settings screen beside
-  the host and port.
+- It needs a per-user token (`vmp_...`). Make one on the VoiceManager host
+  with `voicemanager user token add you my-console`, which prints the token
+  one time. Enter it in the key field of the VOICE MANAGER section on the
+  console's settings screen, beside the host and port. The console sends it
+  in an `Authorization: Bearer <token>` header.
 
 ## Layout
 
