@@ -28,6 +28,11 @@
   the session in progress ends. Before, the change needed an app restart. A
   console that starts with no settings now starts when they are first saved.
   A save that changes no connection setting leaves the console running.
+- A host the console cannot dial, such as one with a space, no longer crashes
+  the app (and, as the HOME app, again at each relaunch). The config screen
+  marks such a host and does not save it; a bad host already stored leaves the
+  console standing by. A console that fails to start for any other reason is
+  logged and the console stands by until the settings change.
 
 ## [0.3.1]
 
