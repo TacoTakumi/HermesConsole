@@ -283,6 +283,9 @@ class VoiceLoopTest {
         // On by default (the design); the half-duplex stopgap wires it off. A supplier, as the
         // loop reads it: a test that flips it between two trips sees each read at its own trip.
         bargeInEnabled: () -> Boolean = { true },
+        // Audible by default, as on any console that has not muted its own media: the guard holds
+        // as it always has. The tests of the silent-speaker bypass turn it on.
+        speakerSilent: () -> Boolean = { false },
         // The software AEC factory (T-08): null by default, so every existing test runs raw
         // capture exactly as before; the AEC-wiring tests inject a fake through this seam.
         aecFactory: (() -> SoftwareAec?)? = null,
@@ -301,6 +304,7 @@ class VoiceLoopTest {
         followUpCueGraceMillis = followUpCueGraceMillis,
         bargeIn = bargeIn,
         bargeInEnabled = bargeInEnabled,
+        speakerSilent = speakerSilent,
         aecFactory = aecFactory,
         scope = scope,
         now = now,
@@ -870,6 +874,67 @@ class VoiceLoopTest {
         assertEquals(ConsoleState.LISTENING, loop.state.value)
         assertEquals(listOf("req-1"), voice.ttsCancelled)
         assertEquals(listOf("run-1"), agent.stopped)
+    }
+
+    @Test
+    fun `with the speaker silent, a cold canceller is barged in on from the first word`() = runTest {
+        // The demo setup: the console plays as media and the media volume is at 0. Nothing comes
+        // out of the speaker, so nothing can leak back through the canceller, and the guard's
+        // warm-up after every capture start would only make the person say "stop" again.
+        val loop = TestScopeLoop(
+            CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
+            bargeIn = BargeInDetector(), // the production 10 s window, cold
+            bargeInEnabled = { true },
+            speakerSilent = { true },
+        )
+
+        wake.fire()
+        voice.hear(0, "status report", endpointed = true)
+        runCurrent()
+        agent.emit(HermesEvent.MessageDelta("run-1", "All systems nominal. "))
+        voice.emit(TtsEvent.Start("req-1", 22_050))
+        voice.emit(TtsEvent.Audio(ByteArray(320), 22_050))
+        runCurrent()
+        assertEquals(ConsoleState.SPEAKING, loop.state.value)
+
+        // 100 ms of speech - into an echo canceller with 100 ms of exposure, and no echo to leak.
+        repeat(5) { capture.speak(speech()) }
+        runCurrent()
+
+        assertNotNull(loop.lastBargeIn.value, "a silent speaker has no echo: the first word is the person")
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        assertEquals(listOf("req-1"), voice.ttsCancelled)
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(1, sinks.single().stops)
+    }
+
+    @Test
+    fun `with the speaker audible, a cold canceller still holds the first word back`() = runTest {
+        // The same turn with sound coming out of the speaker: the guard holds as before.
+        val loop = TestScopeLoop(
+            CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
+            bargeIn = BargeInDetector(),
+            bargeInEnabled = { true },
+            speakerSilent = { false },
+        )
+
+        wake.fire()
+        voice.hear(0, "status report", endpointed = true)
+        runCurrent()
+        agent.emit(HermesEvent.MessageDelta("run-1", "All systems nominal. "))
+        voice.emit(TtsEvent.Start("req-1", 22_050))
+        voice.emit(TtsEvent.Audio(ByteArray(320), 22_050))
+        runCurrent()
+        assertEquals(ConsoleState.SPEAKING, loop.state.value)
+
+        repeat(5) { capture.speak(speech()) }
+        runCurrent()
+
+        assertNull(loop.lastBargeIn.value, "an audible speaker can leak: a cold canceller is not trusted")
+        assertEquals(ConsoleState.SPEAKING, loop.state.value)
+        assertTrue(voice.ttsCancelled.isEmpty())
+        assertTrue(agent.stopped.isEmpty())
+        assertEquals(0, sinks.single().stops)
     }
 
     @Test

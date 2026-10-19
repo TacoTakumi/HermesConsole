@@ -143,6 +143,7 @@ class WallArtifactTurnTest {
             // this test exists to photograph. The window is runtime config, not assembly.
             followUpWindowMillis = { 0L },
             bargeInEnabled = { false },
+            speakerSilent = { false },
             scope = scope,
         )
 

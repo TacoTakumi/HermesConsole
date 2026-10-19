@@ -116,6 +116,16 @@ class VoiceLoop(
      */
     private val bargeInEnabled: () -> Boolean = { true },
     /**
+     * Whether the tablet's speaker is silent, so the console's voice cannot reach the microphone.
+     * The detector's convergence guard holds a barge-in back while the echo canceller is cold,
+     * because a cold canceller leaks the speaker's sound back as speech - and with the speaker
+     * silent there is no sound to leak, so the guard would only make the person repeat
+     * themselves after every capture start. A supplier, like [bargeInEnabled]: the detector asks
+     * it only when it hears speech the guard would hold back, so the 50 Hz frame loop pays for
+     * no device read. False - the default - keeps the guard as it always was.
+     */
+    private val speakerSilent: () -> Boolean = { false },
+    /**
      * The software echo canceller's factory, or null to run raw capture (the stopgap and the
      * test harness default). One instance is created per capture session - here in [start], seeded
      * with the measured output-path latency, and closed in [close] - and every call funnels
@@ -393,7 +403,7 @@ class VoiceLoop(
                 // Offered on every frame, whatever the state: playback exposure is what warms the
                 // canceller, and the detector cannot count what it is not shown. With barge-in enabled
                 // the verdict is acted on; the setting is read at the trip, so a flip gates the next one.
-                val wouldBargeIn = bargeIn.accept(cancelled, playing = speaking) && speaking
+                val wouldBargeIn = bargeIn.accept(cancelled, playing = speaking, speakerSilent) && speaking
                 if (wouldBargeIn) {
                     if (bargeInEnabled()) onBargeIn() else logSuppressedBargeIn()
                 }

@@ -26,6 +26,11 @@ package com.hermesconsole.audio
  * [onPlaybackStarted] re-arms the guard at each reply onset. The first, cold-boot convergence pays
  * the full [windowMs]; every warm re-arm after it pays only the short [reArmWindowMs], because the
  * canceller is re-adapting a reference it already half-knows, not learning from nothing.
+ *
+ * Everything the guard protects against is echo: the speaker's own sound coming back through the
+ * microphone. With the speaker silent there is none, and [BargeInDetector.accept] may skip the
+ * guard - which keeps counting exposure all the same, so a speaker that becomes audible again
+ * meets a guard that knows how warm the canceller is.
  */
 class ConvergenceGuard(
     private val config: AudioConfig = AudioConfig(),
@@ -149,7 +154,8 @@ data class BargeInTrigger(
  *
  * Two questions, and both must answer yes: did the microphone hear speech ([SpeechGate]), and is
  * what it heard trustworthy ([ConvergenceGuard])? The gate runs on every frame either way - the
- * guard decides what may be done about it, never what is measured.
+ * guard decides what may be done about it, never what is measured. The guard's question is only
+ * worth asking when the speaker can make an echo; see [accept].
  */
 class BargeInDetector(
     private val gate: SpeechGate = SpeechGate(),
@@ -184,10 +190,17 @@ class BargeInDetector(
     /**
      * Feed one capture frame, with whether the console was playing audio while it was captured.
      * Returns true on the frame where a barge-in should be acted on.
+     *
+     * [speakerSilent] says whether the tablet's speaker is making no sound. The guard holds a cold
+     * canceller's verdict back because the speaker's voice leaks through it; with the speaker
+     * silent there is nothing to leak, so speech is acted on from the first word. The guard is
+     * still fed every frame, so exposure and convergence are counted - and reported in the
+     * [trigger] - exactly as before. The supplier is asked only on a frame with speech that the
+     * guard would hold back: it reads the device, and this runs on every 20 ms frame.
      */
-    fun accept(frame: ByteArray, playing: Boolean): Boolean {
+    fun accept(frame: ByteArray, playing: Boolean, speakerSilent: () -> Boolean = { false }): Boolean {
         val armed = guard.accept(frame, playing)
         val speech = gate.accept(frame)
-        return armed && speech
+        return speech && (armed || speakerSilent())
     }
 }

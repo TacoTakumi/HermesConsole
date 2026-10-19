@@ -523,7 +523,8 @@ class MainActivity : ComponentActivity() {
         settings: StateFlow<BackendSettings>,
         scope: CoroutineScope,
     ): WallConsole {
-        val mic = MicPipeline(getSystemService(Context.AUDIO_SERVICE) as AudioManager, AudioConfig())
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val mic = MicPipeline(audioManager, AudioConfig())
         val console = WallConsole(
             backends = backends,
             cues = checkNotNull(cuePlayer)::play,
@@ -531,7 +532,7 @@ class MainActivity : ComponentActivity() {
             // The announcement's own one-shot on the cue route (REQ-11): the cue player owns its
             // sink, so the spoken line gets a sibling rather than a shared one.
             announcementSink = AudioTrackOneShotSink(
-                getSystemService(Context.AUDIO_SERVICE) as AudioManager,
+                audioManager,
                 AudioConfig(),
                 outputGain,
                 recordablePlayback,
@@ -540,6 +541,12 @@ class MainActivity : ComponentActivity() {
             wake = WakeWordDetector(applicationContext),
             followUpWindowMillis = { settings.value.followUpWindowSeconds * 1_000L },
             bargeInEnabled = { settings.value.bargeIn },
+            // With recordable audio on the console plays as media, so the media volume is its
+            // speaker volume, and at 0 nothing reaches the microphone to leak. With it off the
+            // console plays as assistant, which the media volume does not silence.
+            speakerSilent = {
+                recordablePlayback.enabled && audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+            },
             // The software echo canceller (T-08, REQ-01/REQ-08): one native AEC3 session per
             // capture session, created at capture start. Whether the loop is given this factory at
             // all is WallConsole's SOFTWARE_AEC_ENABLED, beside the barge-in switch; handing it
@@ -714,6 +721,12 @@ internal class WallConsole(
      */
     bargeInEnabled: () -> Boolean,
     /**
+     * Whether the tablet's speaker is silent, read through to the loop when it hears speech the
+     * echo canceller's warm-up would hold back: with no sound out there is no echo to guard
+     * against, so barge-in acts from the first word.
+     */
+    speakerSilent: () -> Boolean,
+    /**
      * The software echo canceller's factory (T-08, REQ-01/REQ-08): one AEC3 session per capture
      * session, created by the loop at capture start and seeded with the measured output latency.
      * Null - the assembly tests - runs raw capture. The shipping wall wires the native
@@ -855,6 +868,7 @@ internal class WallConsole(
         // applies to the next barge-in, with nothing rebuilt. Off, the half-duplex stopgap - trips
         // are still detected and logged, they are just not acted on.
         bargeInEnabled = bargeInEnabled,
+        speakerSilent = speakerSilent,
         // The software AEC kill switch, beside the barge-in one (see SOFTWARE_AEC_ENABLED). Off
         // today: no AEC3 in the capture path, so the detector reads the hardware canceller's own
         // output and a dropout measurement is taken through one canceller, not two.

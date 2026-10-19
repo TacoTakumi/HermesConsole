@@ -224,4 +224,59 @@ class ConvergenceGuardTest {
         // exposure did not mean the leak had outlasted 2 s (docs/aec-spike.md, "The seventh sighting").
         assertEquals(2_000L, ConvergenceGuard.DEFAULT_REARM_WINDOW_MS)
     }
+
+    @Test
+    fun `a cold canceller holds speech back while the speaker is audible`() {
+        // The guard exists because the speaker's voice leaks back through a cold canceller. With
+        // the speaker audible, a silent-speaker check that answers no changes nothing.
+        val detector = BargeInDetector()
+        val speech = tone(0.5)
+
+        assertFalse(
+            (1..50).any { detector.accept(speech, playing = true, speakerSilent = { false }) },
+            "a cold canceller with the speaker audible must still hold barge-in back",
+        )
+    }
+
+    @Test
+    fun `a cold canceller does not hold speech back while the speaker is silent`() {
+        // No sound from the speaker, no echo for the canceller to leak: the guard only adds delay.
+        // The person is heard from the first word, cold canceller or not.
+        val detector = BargeInDetector()
+        val speech = tone(0.5)
+
+        val fired = (1..SpeechGate.DEFAULT_CONSECUTIVE_FRAMES).map {
+            detector.accept(speech, playing = true, speakerSilent = { true })
+        }
+        assertTrue(fired.last(), "with the speaker silent, the first sustained speech must be acted on")
+        assertFalse(detector.trigger().converged, "the bypass does not pretend the canceller converged")
+        assertEquals(
+            SpeechGate.DEFAULT_CONSECUTIVE_FRAMES * 20L,
+            detector.trigger().exposureMillis,
+            "the guard keeps counting exposure while it is bypassed",
+        )
+    }
+
+    @Test
+    fun `the silent-speaker check runs only on speech the guard would hold back`() {
+        // The check reads the device volume - a binder call - and the frame loop runs at 50 Hz. It
+        // is asked only when there is speech to act on and the guard alone stands in the way.
+        val detector = BargeInDetector()
+        var asked = 0
+        val silent = { asked++; true }
+
+        repeat(100) { detector.accept(silence(), playing = true, speakerSilent = silent) } // 2 s: cold
+        assertEquals(0, asked, "no speech, nothing to act on: the check must not run")
+
+        repeat(SpeechGate.DEFAULT_CONSECUTIVE_FRAMES) { detector.accept(tone(0.5), playing = true, speakerSilent = silent) }
+        assertEquals(1, asked, "speech on a cold canceller is what the check is for")
+
+        repeat((ConvergenceGuard.DEFAULT_WINDOW_MS / 20).toInt()) {
+            detector.accept(silence(), playing = true, speakerSilent = silent)
+        }
+        assertTrue(detector.isConverged)
+        val before = asked
+        repeat(SpeechGate.DEFAULT_CONSECUTIVE_FRAMES) { detector.accept(tone(0.5), playing = true, speakerSilent = silent) }
+        assertEquals(before, asked, "a converged canceller needs no bypass: the check must not run")
+    }
 }
