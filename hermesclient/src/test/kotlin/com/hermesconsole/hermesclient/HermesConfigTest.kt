@@ -44,4 +44,18 @@ class HermesConfigTest {
         assertNotEquals(config, config.copy(apiKey = "other-made-up-key"))
         assertEquals("other-made-up-key", config.copy(apiKey = "other-made-up-key").apiKey)
     }
+
+    @Test
+    fun `a name, an IPv4 and an IPv6 address are dialable hosts`() {
+        for (host in listOf("gateway.local", "10.0.0.5", "::1", "[fe80::1]")) {
+            assertTrue(isDialableHost(host), host)
+        }
+    }
+
+    @Test
+    fun `a host with a space or no host at all is not dialable`() {
+        // Past this check, OkHttp would throw from HttpUrl.Builder.host() the moment a client dials.
+        assertFalse(isDialableHost("my host"))
+        assertFalse(isDialableHost(""))
+    }
 }

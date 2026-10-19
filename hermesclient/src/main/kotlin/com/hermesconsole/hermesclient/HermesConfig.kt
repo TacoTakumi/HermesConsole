@@ -3,6 +3,13 @@ package com.hermesconsole.hermesclient
 import okhttp3.HttpUrl
 
 /**
+ * Whether the HTTP client would accept [host] - a name, an IPv4 address, or an IPv6 address with
+ * or without brackets. Asked of OkHttp's own parser, the same one both clients build their URLs
+ * with, so the answer cannot drift from what a dial does: a host it rejects throws there instead.
+ */
+fun isDialableHost(host: String): Boolean = runCatching { HttpUrl.Builder().host(host) }.isSuccess
+
+/**
  * Where the Hermes gateway lives and how we authenticate to it. Runtime config, never compiled in
  * (REQ-28): the console supplies host, port and key from settings, and nothing here is ever logged.
  *

@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.hermesconsole.hermesclient.HermesConfig
+import com.hermesconsole.hermesclient.isDialableHost
 import com.hermesconsole.voiceclient.VoiceManagerConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -80,6 +81,8 @@ data class BackendSettings(
     fun toBackends(): DebugBackends? {
         if (hermesHost.isBlank() || hermesKey.isBlank() || vmHost.isBlank() || vmKey.isBlank()) return null
         if (hermesPort !in VALID_PORTS || vmPort !in VALID_PORTS) return null
+        // A stored host the HTTP client rejects would otherwise throw when the console is built.
+        if (!isDialableHost(hermesHost) || !isDialableHost(vmHost)) return null
         // The voice client turns an unusable token into AuthFailed itself; HermesConfig throws.
         if (!isHeaderSafe(hermesKey)) return null
         return DebugBackends(

@@ -104,6 +104,15 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `a host the HTTP client cannot dial is not saved, a blank one is`() {
+        // Saved, it would throw from the client the moment the console dialled it; held here, the
+        // Tomato border names the field. Blank is a host not yet typed, not a bad one.
+        assertNull(opened.copy(hermesHost = "my host").toSettings(), "hermes host")
+        assertNull(opened.copy(vmHost = "my host").toSettings(), "voice host")
+        assertNotNull(opened.copy(hermesHost = "", vmHost = "  ").toSettings())
+    }
+
+    @Test
     fun `a half-configured console still saves - completeness is judged elsewhere`() {
         // The screen persists drafts: somebody setting a console up types the hosts on Monday and
         // finds the keys on Tuesday, and must not lose Monday's work to a validation rule that

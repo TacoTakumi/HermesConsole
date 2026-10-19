@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.hermesconsole.hermesclient.isDialableHost
 import com.hermesconsole.lcars.LcarsBar
 import com.hermesconsole.lcars.LcarsColors
 import com.hermesconsole.lcars.LcarsMetrics
@@ -82,12 +83,15 @@ internal data class SettingsDraft(
         bargeIn = initial.bargeIn,
     )
 
-    /** What SAVE persists, or null while any number does not parse or a key cannot go in a header. */
+    /**
+     * What SAVE persists, or null while any number does not parse, a host is one the HTTP client
+     * would refuse to dial, or a key cannot go in a header. A blank host still saves.
+     */
     fun toSettings(): BackendSettings? = BackendSettings(
-        hermesHost = hermesHost.trim(),
+        hermesHost = hermesHost.trim().takeIf(::isSaveableHost) ?: return null,
         hermesPort = parsePort(hermesPort.trim()) ?: return null,
         hermesKey = hermesKey.trim().takeIf(::isHeaderSafe) ?: return null,
-        vmHost = vmHost.trim(),
+        vmHost = vmHost.trim().takeIf(::isSaveableHost) ?: return null,
         vmPort = parsePort(vmPort.trim()) ?: return null,
         vmKey = vmKey.trim().takeIf(::isHeaderSafe) ?: return null,
         followUpWindowSeconds = parseFollowUpWindow(followUpWindow.trim()) ?: return null,
@@ -97,6 +101,9 @@ internal data class SettingsDraft(
         bargeIn = bargeIn,
     )
 }
+
+/** A host the screen may save: blank (not typed yet) or one the HTTP client would dial. */
+private fun isSaveableHost(host: String): Boolean = host.isBlank() || isDialableHost(host)
 
 /**
  * The settings screen (T-23, REQ-28): the one place the console's runtime values - each backend's
@@ -274,7 +281,12 @@ private fun BackendColumn(
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(LcarsMetrics.Gap * 2)) {
         BasicText(title, style = LcarsTheme.typography.header.copy(color = LcarsColors.IceBlue))
-        SettingsField(label = "host", value = host, onValueChange = onHost)
+        SettingsField(
+            label = "host",
+            value = host,
+            onValueChange = onHost,
+            valid = isSaveableHost(host.trim()),
+        )
         SettingsField(
             label = "port",
             value = port,
@@ -316,8 +328,9 @@ private fun SettingsField(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(LcarsMetrics.BarHeight)
-                // Tomato is the screen's whole validation story: an unparseable port cannot be
-                // saved, and the border says which field is holding SAVE hostage.
+                // Tomato is the screen's whole validation story: an unparseable port or a host the
+                // client cannot dial cannot be saved, and the border says which field is holding
+                // SAVE hostage.
                 .border(
                     width = 2.dp,
                     color = if (valid) LcarsColors.Gray else LcarsColors.Tomato,

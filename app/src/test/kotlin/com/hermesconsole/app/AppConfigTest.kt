@@ -232,6 +232,13 @@ class AppConfigTest {
     }
 
     @Test
+    fun `a stored host the HTTP client cannot dial dials nothing`() {
+        // OkHttp throws on such a host when the console is built; the wall must stand by instead.
+        assertNull(everything.copy(hermesHost = "my host").toBackends())
+        assertNull(everything.copy(vmHost = "my host").toBackends())
+    }
+
+    @Test
     fun `port text parses only as a real tcp port`() {
         // The settings screen edits ports as text; this is the one place the text becomes a port.
         assertEquals(8642, parsePort("8642"))
