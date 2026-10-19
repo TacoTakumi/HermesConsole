@@ -207,7 +207,7 @@ install steps.
 
 - The console talks to it over one WebSocket, `/ws/stream`, sending 16 kHz
   mono 16-bit audio and receiving transcripts and reply audio.
-- The console's default port for it is 8000.
+- The console's default port for it is 8255.
 - It needs a per-user token (`vmp_...`). Make one on the VoiceManager host
   with `voicemanager user token add you my-console`, which prints the token
   one time. Enter it in the TOKEN field of the VOICE MANAGER section on the
@@ -241,7 +241,7 @@ install steps.
     | VoiceManager          |   | Hermes gateway, console profile        |
     | speech-to-text        |   | hermesconsole-gateway branch           |
     | text-to-speech        |   | port 8643                              |
-    | port 8000             |   | plugins: render_artifact, device_tools |
+    | port 8255             |   | plugins: render_artifact, device_tools |
     +-----------------------+   +-------------------+--------------------+
                                                     |
                                                     v

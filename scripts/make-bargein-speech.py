@@ -16,7 +16,7 @@ Run it with VoiceManager's own interpreter: it imports VoiceManager's async clie
 python does not have the dependencies for.
 
     VOICEMANAGER_SRC=/home/you/VoiceManager/src VM_TOKEN=... /home/you/VoiceManager/venv/bin/python \
-        scripts/make-bargein-speech.py [--host localhost] [--port 8000]
+        scripts/make-bargein-speech.py [--host localhost] [--port 8255]
 """
 import argparse
 import asyncio
@@ -36,7 +36,7 @@ ASSETS = os.path.join(os.path.dirname(__file__), "..", "app", "src", "androidTes
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default=os.environ.get("VM_HOST", "localhost"))
-parser.add_argument("--port", type=int, default=int(os.environ.get("VM_PORT", "8000")))
+parser.add_argument("--port", type=int, default=int(os.environ.get("VM_PORT", "8255")))
 parser.add_argument("--out-dir", default=ASSETS)
 parser.add_argument("--only", help="synthesize just this fixture, leaving the others untouched")
 args = parser.parse_args()

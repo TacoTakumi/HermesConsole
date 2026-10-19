@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1]
+
+### Changed
+
+- The default VoiceManager port is now 8255, VoiceManager's new default. A
+  console with saved settings keeps the port it has. The speech fixture
+  scripts (make-aec-speech.py, make-bargein-speech.py) default to 8255 too.
+
 ## [0.3.0]
 
 ### Added

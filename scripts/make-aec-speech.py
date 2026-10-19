@@ -4,7 +4,7 @@ This is the exact audio the console will emit (the live TTS engine, at the rate 
 the wire), so the hardware gate (T-04) measures the real failure mode rather than a stand-in tone.
 The output is a build input for the instrumented gate, not a source file - it is gitignored.
 
-    VM_TOKEN=... python3 scripts/make-aec-speech.py [--host localhost] [--port 8000]
+    VM_TOKEN=... python3 scripts/make-aec-speech.py [--host localhost] [--port 8255]
 """
 import argparse
 import asyncio
@@ -19,7 +19,7 @@ from voicemanager.client import VoiceManagerClient  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default=os.environ.get("VM_HOST", "localhost"))
-parser.add_argument("--port", type=int, default=int(os.environ.get("VM_PORT", "8000")))
+parser.add_argument("--port", type=int, default=int(os.environ.get("VM_PORT", "8255")))
 parser.add_argument(
     "--out",
     default=os.path.join(os.path.dirname(__file__), "..", "app", "src", "androidTest", "assets", "tts60.pcm"),

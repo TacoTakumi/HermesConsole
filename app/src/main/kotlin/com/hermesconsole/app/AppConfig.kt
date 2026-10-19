@@ -115,7 +115,7 @@ data class BackendSettings(
         const val DEFAULT_HERMES_HOST = "127.0.0.1"
         const val DEFAULT_HERMES_PORT = 8642
         const val DEFAULT_VM_HOST = "127.0.0.1"
-        const val DEFAULT_VM_PORT = 8000
+        const val DEFAULT_VM_PORT = 8255
 
         /** REQ-40's default: ten seconds of open floor after each reply. */
         const val DEFAULT_FOLLOW_UP_WINDOW_SECONDS = 10
