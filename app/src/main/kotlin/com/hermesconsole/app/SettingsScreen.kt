@@ -64,6 +64,7 @@ internal data class SettingsDraft(
     val sessionTimeout: String,
     val screensaverTimeout: String,
     val recordableAudio: Boolean,
+    val bargeIn: Boolean,
 ) {
 
     /** The screen as it opens (REQ-17): every stored value already in its field. */
@@ -78,6 +79,7 @@ internal data class SettingsDraft(
         sessionTimeout = initial.sessionTimeoutSeconds.toString(),
         screensaverTimeout = initial.screensaverTimeoutSeconds.toString(),
         recordableAudio = initial.recordableAudio,
+        bargeIn = initial.bargeIn,
     )
 
     /** What SAVE persists, or null while any number does not parse or a key cannot go in a header. */
@@ -92,6 +94,7 @@ internal data class SettingsDraft(
         sessionTimeoutSeconds = parseIdleTimeout(sessionTimeout.trim()) ?: return null,
         screensaverTimeoutSeconds = parseIdleTimeout(screensaverTimeout.trim()) ?: return null,
         recordableAudio = recordableAudio,
+        bargeIn = bargeIn,
     )
 }
 
@@ -211,6 +214,13 @@ fun SettingsScreen(
                         text = if (draft.recordableAudio) "recordable audio on" else "recordable audio off",
                         color = if (draft.recordableAudio) LcarsColors.Orange else LcarsColors.Gray,
                         onClick = { draft = draft.copy(recordableAudio = !draft.recordableAudio) },
+                    )
+                    // Speech over a reply stops it. Off unless the tablet speaker is quiet, or the
+                    // console hears itself and cuts its own replies off.
+                    LcarsPill(
+                        text = if (draft.bargeIn) "barge-in on" else "barge-in off",
+                        color = if (draft.bargeIn) LcarsColors.Orange else LcarsColors.Gray,
+                        onClick = { draft = draft.copy(bargeIn = !draft.bargeIn) },
                     )
                 }
             }

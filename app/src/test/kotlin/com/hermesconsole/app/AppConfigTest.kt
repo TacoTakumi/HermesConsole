@@ -56,6 +56,7 @@ class AppConfigTest {
         screensaverTimeoutSeconds = 150,
         // Not the default, so a round trip that drops it fails.
         recordableAudio = true,
+        bargeIn = true,
     )
 
     // -- persistence --------------------------------------------------------------------------
@@ -144,6 +145,20 @@ class AppConfigTest {
     fun `a store without the recordable setting plays on the assistant usage`() = runBlocking {
         // Every console upgraded from a build without the setting keeps its tested playback path.
         assertEquals(false, storeIn(scope()).read().recordableAudio)
+    }
+
+    @Test
+    fun `a store without the barge-in setting keeps it off`() = runBlocking {
+        // A fresh install, or a console upgraded from a build without the setting, must not start
+        // cutting its own replies off when the echo canceller lets its speech back in.
+        assertEquals(false, storeIn(scope()).read().bargeIn)
+    }
+
+    @Test
+    fun `a saved barge-in reads back on`() = runBlocking {
+        val store = storeIn(scope())
+        store.save(everything.copy(bargeIn = true))
+        assertEquals(true, store.read().bargeIn)
     }
 
     @Test

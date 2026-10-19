@@ -31,6 +31,7 @@ class SettingsScreenTest {
         screensaverTimeoutSeconds = 150,
         // Not the default, so a round trip that drops it fails.
         recordableAudio = true,
+        bargeIn = true,
     )
 
     /** The screen as it opens: every stored value already in its field. */
@@ -45,6 +46,14 @@ class SettingsScreenTest {
         assertEquals("150", opened.screensaverTimeout)
         assertEquals("25", opened.followUpWindow)
         assertEquals(stored, opened.toSettings(), "opening and saving unchanged must be a no-op")
+    }
+
+    @Test
+    fun `the barge-in toggle opens on what is stored and saves its flip`() {
+        // Seeded like every other field: a toggle that opened off would turn barge-in off again
+        // the next time anyone pressed SAVE for an unrelated reason.
+        assertEquals(true, opened.bargeIn)
+        assertEquals(false, opened.copy(bargeIn = !opened.bargeIn).toSettings()!!.bargeIn)
     }
 
     @Test

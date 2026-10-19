@@ -62,6 +62,13 @@ data class BackendSettings(
      * default: the assistant usage is the console's tested path, and this is for demo takes.
      */
     val recordableAudio: Boolean = false,
+    /**
+     * Let speech over a reply stop it. Off by default: on this tablet the hardware echo canceller
+     * no longer removes the console's own speech, so at normal volume the console would cut itself
+     * off. Turn it on when the tablet speaker is quiet, for example a demo take with the media
+     * volume at 0 and headphones on the recording host.
+     */
+    val bargeIn: Boolean = false,
 ) {
 
     /**
@@ -100,7 +107,7 @@ data class BackendSettings(
         "BackendSettings(hermes=$hermesHost:$hermesPort key=${hermesKey.presence()}, " +
             "vm=$vmHost:$vmPort key=${vmKey.presence()}, followUp=${followUpWindowSeconds}s, " +
             "session=${sessionTimeoutSeconds}s, screensaver=${screensaverTimeoutSeconds}s, " +
-            "voice=$voiceVolumePercent%, recordable=$recordableAudio)"
+            "voice=$voiceVolumePercent%, recordable=$recordableAudio, bargeIn=$bargeIn)"
 
     private fun String.presence() = if (isBlank()) "unset" else "set"
 
@@ -203,6 +210,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             voiceVolumePercent = prefs[VOICE_VOLUME_PERCENT]
                 ?: BackendSettings.DEFAULT_VOICE_VOLUME_PERCENT,
             recordableAudio = prefs[RECORDABLE_AUDIO] ?: false,
+            bargeIn = prefs[BARGE_IN] ?: false,
         )
     }
 
@@ -221,6 +229,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             prefs[SESSION_TIMEOUT_S] = settings.sessionTimeoutSeconds
             prefs[SCREENSAVER_TIMEOUT_S] = settings.screensaverTimeoutSeconds
             prefs[RECORDABLE_AUDIO] = settings.recordableAudio
+            prefs[BARGE_IN] = settings.bargeIn
             // Not the voice volume: the settings screen saves without it, and a SAVE there must not
             // reset what was set by voice.
         }
@@ -243,6 +252,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val SCREENSAVER_TIMEOUT_S = intPreferencesKey("screensaver_timeout_s")
         val VOICE_VOLUME_PERCENT = intPreferencesKey("voice_volume_percent")
         val RECORDABLE_AUDIO = booleanPreferencesKey("recordable_audio")
+        val BARGE_IN = booleanPreferencesKey("barge_in")
     }
 }
 
