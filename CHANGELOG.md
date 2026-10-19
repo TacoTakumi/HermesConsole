@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2]
+
+### Added
+
+- scripts/record-demo.sh can take the voice from a mic on the recording host:
+  set MIC to its PipeWire source name. scrcpy then plays the tablet audio on
+  the host, so wear headphones, and the script sets the tablet's media volume
+  to 0 for the take and back after. The recording keeps the full level. The
+  mic hears no reply, and the mix has no echo. Without MIC the script records the tablet
+  mic as before.
+
 ## [0.3.1]
 
 ### Changed

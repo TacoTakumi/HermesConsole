@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
-# Records a demo at the wall: the tablet screen, the tablet's playback and the tablet's mic, then
-# mixes them into one demo.mp4.
+# Records a demo at the wall: the tablet screen, the tablet's playback and a mic, then mixes them
+# into one demo.mp4.
 #
-# Two scrcpy instances, because one carries a single audio source:
+# Turn on the console's "recordable audio" setting first. Playback capture skips USAGE_ASSISTANT,
+# so without it the console's speech and cues are not in the recording.
+#
+# With MIC set (host mic), the voice comes from a mic on this host:
+#   - screen.mkv: video plus the playback, with --audio-dup, and scrcpy plays the tablet audio on
+#     this host, so wear headphones here. The capture takes the audio before the tablet's volume,
+#     so the script sets the tablet's media volume to 0 for the take and sets it back after. On
+#     the SM-X210 the sources that mute the tablet ("output", and "playback" without --audio-dup)
+#     captured none of the console's audio.
+#   - mic.mka: ffmpeg records MIC through PipeWire's pulse interface. The mic hears no tablet
+#     speaker, so the mix adds it as is, with no echo to remove.
+# ffmpeg stamps the first mic sample with the wall clock, and the mix lines the mic up by it.
+#
+# With MIC unset (tablet mic), two scrcpy instances, because one carries a single audio source:
 #   - screen.mkv: video plus the playback, with --audio-dup so the tablet keeps playing its
-#     replies out loud. The default "output" source would mute the tablet and break the demo.
-#     Playback capture skips USAGE_ASSISTANT, so turn on the console's "recordable audio"
-#     setting first, or its speech and cues are not in this track.
+#     replies out loud.
 #   - mic.mka: the tablet mic (the "mic" source), which carries the speaker's voice.
 #
 # The console holds the mic as VOICE_COMMUNICATION. A second capture usually runs beside it, but
@@ -28,20 +39,24 @@
 #
 # Environment:
 #   ANDROID_SERIAL  the tablet, e.g. 192.0.2.10:5555 (required when more than one device is up)
+#   MIC             PipeWire source name of a mic on this host (see pactl list short sources).
+#                   Unset, the script records the tablet mic.
 #   SCRCPY          scrcpy binary (default: scrcpy on PATH; needs 2.4 or later for --audio-dup)
 #   ADB             adb binary scrcpy uses (default: adb on PATH). Point it at the adb that
 #                   holds the wireless connection: a second adb version restarts the server
 #                   and drops the tablet.
-#   MIC_GAIN_DB     gain on the tablet mic in the mix (default 12). Android has no mic gain
-#                   setting, and speech from across the room records low. Also for `mix`.
+#   MIC_GAIN_DB     gain on the mic in the mix: default 12 for the tablet mic, as Android has no
+#                   mic gain setting and speech from across the room records low; default 0 for
+#                   a host mic. Also for `mix`.
 #
-# Each take lands in build/demo/<timestamp>/: screen.mkv, mic.mka, offset, demo.mp4.
+# Each take lands in build/demo/<timestamp>/: screen.mkv, mic.mka, offset, demo.mp4, and host-mic
+# (the source name) for a host mic take.
 # The lag measurement needs python3 with numpy.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SCRCPY="${SCRCPY:-scrcpy}"
-MIC_GAIN_DB="${MIC_GAIN_DB:-12}"
+MIC="${MIC:-}"
 ADB="${ADB:-$(command -v adb || true)}"
 export ADB
 PKG=com.hermesconsole
@@ -54,6 +69,16 @@ stamp_lines() {
 }
 
 adb_t() { "$ADB" ${ANDROID_SERIAL:+-s "$ANDROID_SERIAL"} "$@"; }
+
+# The tablet's media volume (stream 3): prints it with no argument, sets it to $1.
+media_volume() {
+  if [ $# -eq 0 ]; then
+    adb_t shell cmd media_session volume --stream 3 --get 2>/dev/null |
+      sed -n 's/.*volume is \([0-9]*\) .*/\1/p'
+  else
+    adb_t shell cmd media_session volume --stream 3 --set "$1" >/dev/null 2>&1 || true
+  fi
+}
 
 # Android's record of captures it silenced for the console's uid since device time $1
 # ("MM-DD HH:MM:SS"), one line per event.
@@ -93,8 +118,18 @@ EOF
 }
 
 mix() {
-  local dir="$1" offset="${2:-}" source="given" lag mic_filter
-  if [ -z "$offset" ]; then
+  local dir="$1" offset="${2:-}" source="given" lag mic_filter gain graph host_mic=
+  [ -f "$dir/host-mic" ] && host_mic=1
+  if [ -n "$host_mic" ]; then
+    gain="${MIC_GAIN_DB:-0}"
+  else
+    gain="${MIC_GAIN_DB:-12}"
+  fi
+  if [ -z "$offset" ] && [ -n "$host_mic" ]; then
+    # A host mic hears no tablet speaker, so there is no lag to measure.
+    offset=$(cat "$dir/offset")
+    source="wall clock"
+  elif [ -z "$offset" ]; then
     lag=$(measure_lag "$dir")
     if [ -n "$lag" ]; then
       offset=$(awk -v l="$lag" 'BEGIN { printf "%.3f", -l }')
@@ -112,10 +147,16 @@ mix() {
   fi
   # Two passes. scrcpy sends video frames only when the screen changes, and with a long gap in
   # the copied video ffmpeg 6.1 cut the mixed audio at the last frame when both ran in one pass.
-  # The playback is split: one copy goes to the mix, one keys the compressor that ducks the mic.
+  # For the tablet mic the playback is split: one copy goes to the mix, one keys the compressor
+  # that ducks the mic. A host mic goes into the mix as is.
   # The console's speech peaks near full scale, so a limiter keeps the sum from clipping.
+  if [ -n "$host_mic" ]; then
+    graph="[1:a]${mic_filter},volume=${gain}dB[m];[0:a][m]"
+  else
+    graph="[0:a]asplit=2[play][key];[1:a]${mic_filter},volume=${gain}dB[m];[m][key]sidechaincompress=threshold=0.003:ratio=20:attack=5:release=400[duck];[play][duck]"
+  fi
   ffmpeg -v error -y -i "$dir/screen.mkv" -i "$dir/mic.mka" \
-    -filter_complex "[0:a]asplit=2[play][key];[1:a]${mic_filter},volume=${MIC_GAIN_DB}dB[m];[m][key]sidechaincompress=threshold=0.003:ratio=20:attack=5:release=400[duck];[play][duck]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.9:level=disabled[a]" \
+    -filter_complex "${graph}amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.9:level=disabled[a]" \
     -map "[a]" -c:a aac -b:a 192k "$dir/mix.m4a"
   # Re-encode the video at a constant 30 fps with a keyframe every 2 s. scrcpy's stream has one
   # keyframe at the start and no frames while the screen is still, and many players then show
@@ -124,7 +165,7 @@ mix() {
     -vf "tpad=stop_mode=clone:stop=-1,fps=30" -shortest \
     -c:v libx264 -preset veryfast -crf 20 -g 60 -pix_fmt yuv420p -c:a copy \
     -movflags +faststart "$dir/demo.mp4"
-  echo "mixed: $dir/demo.mp4 (mic offset ${offset}s from ${source}, mic gain ${MIC_GAIN_DB} dB)"
+  echo "mixed: $dir/demo.mp4 (mic offset ${offset}s from ${source}, mic gain ${gain} dB)"
 }
 
 # Start one scrcpy recording in the background, logging with timestamps. Sets started_pid.
@@ -132,8 +173,7 @@ mix() {
 start_scrcpy() {
   local log="$1"; shift
   # Line-buffered, or scrcpy holds its log (and the "Recording started" line) until it exits.
-  # --no-audio-playback: scrcpy would also play the tablet audio on this host.
-  stdbuf -oL -eL "$SCRCPY" ${ANDROID_SERIAL:+-s "$ANDROID_SERIAL"} --no-window --no-audio-playback "$@" \
+  stdbuf -oL -eL "$SCRCPY" ${ANDROID_SERIAL:+-s "$ANDROID_SERIAL"} --no-window "$@" \
     </dev/null > >(stamp_lines > "$log") 2>&1 &
   started_pid=$!
 }
@@ -143,13 +183,31 @@ record() {
   dir="build/demo/$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$dir"
 
-  local since screen_pid mic_pid
+  local since screen_pid mic_pid mic_ready saved_volume=
   since=$(adb_t shell date +'%m-%d\ %H:%M:%S' | tr -d '\r')
 
-  start_scrcpy "$dir/screen.log" --audio-dup --record="$dir/screen.mkv"
-  screen_pid=$started_pid
-  start_scrcpy "$dir/mic.log" --no-video --audio-source=mic --record="$dir/mic.mka"
-  mic_pid=$started_pid
+  if [ -n "$MIC" ]; then
+    # scrcpy plays the tablet audio on this host, in place of the tablet speaker.
+    saved_volume=$(media_volume)
+    media_volume 0
+    start_scrcpy "$dir/screen.log" --audio-dup --record="$dir/screen.mkv"
+    screen_pid=$started_pid
+    # The pulse input stamps samples with the wall clock, and the "start:" of its input banner is
+    # the time of the first one.
+    ffmpeg -hide_banner -nostdin -nostats -y -f pulse -i "$MIC" -c:a flac "$dir/mic.mka" \
+      > "$dir/mic.log" 2>&1 &
+    mic_pid=$!
+    mic_ready="start: "
+    printf '%s\n' "$MIC" > "$dir/host-mic"
+  else
+    # --no-audio-playback: scrcpy would also play the tablet audio on this host.
+    start_scrcpy "$dir/screen.log" --no-audio-playback --audio-dup --record="$dir/screen.mkv"
+    screen_pid=$started_pid
+    start_scrcpy "$dir/mic.log" --no-audio-playback --no-video --audio-source=mic \
+      --record="$dir/mic.mka"
+    mic_pid=$started_pid
+    mic_ready="Recording started"
+  fi
 
   # SIGTERM, not SIGINT: a background job in a script starts with SIGINT ignored, and scrcpy
   # keeps it that way. scrcpy closes its file cleanly on SIGTERM.
@@ -157,18 +215,21 @@ record() {
     trap - INT TERM
     kill -TERM "$screen_pid" "$mic_pid" 2>/dev/null || true
     while kill -0 "$screen_pid" 2>/dev/null || kill -0 "$mic_pid" 2>/dev/null; do sleep 0.1; done
+    if [ -n "$saved_volume" ]; then media_volume "$saved_volume"; fi
   }
   trap 'stop; exit 130' INT TERM
 
   # Confirm both are live before anyone starts talking.
-  local i log
+  local i log ready
   for log in screen mic; do
+    ready="Recording started"
+    [ "$log" = mic ] && ready="$mic_ready"
     for i in $(seq 100); do
-      grep -q "Recording started" "$dir/$log.log" 2>/dev/null && break
+      grep -q "$ready" "$dir/$log.log" 2>/dev/null && break
       sleep 0.1
     done
-    if ! grep -q "Recording started" "$dir/$log.log"; then
-      echo "scrcpy ($log) did not start recording" >&2
+    if ! grep -q "$ready" "$dir/$log.log"; then
+      echo "the $log recording did not start" >&2
       cat "$dir/$log.log" >&2
       stop
       exit 1
@@ -177,7 +238,11 @@ record() {
 
   local screen_t0 mic_t0
   screen_t0=$(grep -m1 "Recording started" "$dir/screen.log" | cut -d' ' -f1)
-  mic_t0=$(grep -m1 "Recording started" "$dir/mic.log" | cut -d' ' -f1)
+  if [ -n "$MIC" ]; then
+    mic_t0=$(sed -n 's/.*start: \([0-9.]*\),.*/\1/p' "$dir/mic.log" | head -1)
+  else
+    mic_t0=$(grep -m1 "Recording started" "$dir/mic.log" | cut -d' ' -f1)
+  fi
   awk -v m="$mic_t0" -v s="$screen_t0" 'BEGIN { printf "%.3f\n", m - s }' > "$dir/offset"
 
   echo "RECORDING to $dir - press Enter to stop"
