@@ -202,8 +202,8 @@ The branch goes away once its changes are upstream.
 
 VoiceManager is the console's speech server: streaming speech-to-text for what
 you say, and streaming text-to-speech for each reply, sentence by sentence.
-Its public release is pending. It will be at
-https://github.com/TacoTakumi/VoiceManager.
+It is at https://github.com/TacoTakumi/VoiceManager, and its README has the
+install steps.
 
 - The console talks to it over one WebSocket, `/ws/stream`, sending 16 kHz
   mono 16-bit audio and receiving transcripts and reply audio.
