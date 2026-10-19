@@ -12,6 +12,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.hermesconsole.hermesclient.HermesConfig
 import com.hermesconsole.voiceclient.VoiceManagerConfig
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -143,6 +144,21 @@ data class BackendSettings(
         private val VALID_PORTS = 1..65_535
     }
 }
+
+/**
+ * The backends to build a wall console on, as the settings change: one emission per console the
+ * activity should be running, and null while the settings are not complete enough to dial.
+ *
+ * Keyed on [BackendSettings.toBackends] rather than on the settings themselves, so only the fields
+ * it reads count. Its result is two data classes deep, compared by value, so a save that touches
+ * nothing but the voice level, the clocks, the follow-up window or recordable audio maps to an
+ * equal value and emits nothing - those are read live, and rebuilding for them would drop the mic
+ * and both backends' links for a change that needs neither. A change to any host, port or key
+ * emits the new backends, and settings that stop being complete emit null, which closes the
+ * console and leaves the wall standing by.
+ */
+fun Flow<BackendSettings>.backendChanges(): Flow<DebugBackends?> =
+    map { it.toBackends() }.distinctUntilChanged()
 
 /** The settings screen edits ports as text; this is the one place that text becomes a port. */
 internal fun parsePort(text: String): Int? = text.toIntOrNull()?.takeIf { it in 1..65_535 }

@@ -66,10 +66,13 @@ import com.hermesconsole.wakeword.WakeWordSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -101,8 +104,14 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    /** The live console (T-22): built once the mic grant lands and the backends are configured. */
+    /**
+     * The live console (T-22): built once the mic grant lands and the backends are configured, and
+     * rebuilt whenever a save changes them. Null between a close and the next build.
+     */
     private val wallConsole = MutableStateFlow<WallConsole?>(null)
+
+    /** The running wall console's own scope, ended when it closes. */
+    private var wallConsoleJob: Job? = null
 
     /** Whether this instance took the wall console slot; the debug path never does. */
     private var claimedSlot = false
@@ -452,22 +461,68 @@ class MainActivity : ComponentActivity() {
      * Assemble the live console (T-22): the full voice loop - microphone, wake word, both
      * backends, the speaker - plus the ready state's session switcher and health monitor.
      * Runs only once the mic grant has landed; without configured backends the shell stays a
-     * standing-by frame and the boot still logs its AEC verdict (REQ-02).
+     * standing-by frame and the boot still logs its AEC verdict (REQ-02). A saved change to the
+     * connection settings rebuilds the console on the new ones, and settings that first become
+     * complete after boot build it then - neither needs a relaunch.
      */
     private fun startWallConsole() = lifecycleScope.launch {
         // An older instance's console must close first, or two loops share the mic.
         consoleSlot.awaitRetired()
-        // The settings, live for the life of the console: the backends are fixed at assembly
-        // (reconfiguring them is a relaunch), but the follow-up window is read through this at
-        // every reply's end - the knob applies to the next exchange, no reinstall (REQ-40).
+        // The settings, live for the life of the activity. The follow-up window is read through
+        // this at every reply's end - the knob applies to the next exchange, no reinstall (REQ-40).
+        // The backends are fixed for the life of one console, but no longer for the life of the
+        // app: a save that changes any host, port or key closes the running console and builds the
+        // next one on the new settings, below. A save that changes nothing they read emits nothing,
+        // so the console and its mic stay up.
         val settings = settingsStore.settings
             .stateIn(lifecycleScope, SharingStarted.Eagerly, settingsStore.read())
-        val backends = settings.value.toBackends()
-        if (backends == null) {
-            Log.w(TAG, "console unconfigured; set both keys on the settings screen (REQ-28)")
-            runAecSelfCheck()
-            return@launch
+        var booting = true
+        // collectLatest: a save that lands while the previous console is still starting cancels
+        // that build, and waits for it to close the half-built console (startOwned's catch) before
+        // this block runs again - so a burst of saves still ends with exactly one console.
+        settings.backendChanges().collectLatest { backends ->
+            val firstEmission = booting
+            booting = false
+            // The running console goes first, by the same steps onDestroy takes. Its close returns
+            // with the capture session already stopped and released - VoiceLoop.close closes the
+            // MicPipeline in line, stop() and release() on the AudioRecord before it returns - so
+            // the next console's capture never opens beside it and there is nothing to wait for.
+            closeWallConsole()
+            if (backends == null) {
+                Log.w(TAG, "console unconfigured; set both keys on the settings screen (REQ-28)")
+                // The boot's AEC verdict, from a boot that has no console to log it. Not
+                // again for a console emptied of its settings later: that boot's verdict is logged.
+                if (firstEmission) runAecSelfCheck()
+                return@collectLatest
+            }
+            wallConsole.value = buildWallConsole(backends, settings)
         }
+    }
+
+    /**
+     * One wall console on [backends], started and returned. Its coroutines run in a scope of its
+     * own under the activity's, ended with it in [closeWallConsole]: the health poller and the
+     * approval desk loop for as long as their scope lives, and on a rebuild that must not be the
+     * activity's whole life, or every save would leave the old console polling its old backends.
+     */
+    private suspend fun buildWallConsole(backends: DebugBackends, settings: StateFlow<BackendSettings>): WallConsole {
+        val job = SupervisorJob(lifecycleScope.coroutineContext[Job])
+        try {
+            return startWallConsoleOn(backends, settings, CoroutineScope(lifecycleScope.coroutineContext + job))
+                .also { wallConsoleJob = job }
+        } catch (e: Throwable) {
+            // Failed or cancelled mid-start: startOwned has already closed the console.
+            job.cancel()
+            throw e
+        }
+    }
+
+    /** The console's assembly and start, on [scope]: the same wiring every boot has built. */
+    private suspend fun startWallConsoleOn(
+        backends: DebugBackends,
+        settings: StateFlow<BackendSettings>,
+        scope: CoroutineScope,
+    ): WallConsole {
         val mic = MicPipeline(getSystemService(Context.AUDIO_SERVICE) as AudioManager, AudioConfig())
         val console = WallConsole(
             backends = backends,
@@ -514,11 +569,13 @@ class MainActivity : ComponentActivity() {
                     settingsStore.saveVoiceVolume(percent)
                 },
             ),
-            scope = lifecycleScope,
+            scope = scope,
         )
         // Through the slot: if a newer instance evicts this one mid-start, the half-started console
-        // is closed here before the newer one may build its own.
-        consoleSlot.startOwned(this@MainActivity, console) {
+        // is closed here before the newer one may build its own. A newer save cancelling this build
+        // ends the same way - the blocking start below runs out, startOwned sees the cancel, closes
+        // the console and rethrows - so the caller never publishes a console that did not start.
+        return consoleSlot.startOwned(this@MainActivity, console) {
             withContext(Dispatchers.IO) {
                 // The AEC verdict, on the record every boot (REQ-02) - logged where the pipeline is
                 // built, from the very capture session the loop will run on.
@@ -527,7 +584,20 @@ class MainActivity : ComponentActivity() {
                 console.start()
             }
         }
-        wallConsole.value = console
+    }
+
+    /**
+     * Close the running wall console, if there is one, and end its scope. onDestroy and a rebuild
+     * both come through here, so the two cannot drift apart in what closing a console means.
+     */
+    private fun closeWallConsole() {
+        wallConsole.value?.let {
+            it.close()
+            Log.i(TAG, "wall console closed")
+        }
+        wallConsole.value = null
+        wallConsoleJob?.cancel()
+        wallConsoleJob = null
     }
 
     private fun startDebugConsole() {
@@ -564,11 +634,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         debugConsole?.close()
         debugConsole = null
-        wallConsole.value?.let {
-            it.close()
-            Log.i(TAG, "wall console closed")
-        }
-        wallConsole.value = null
+        closeWallConsole()
         cuePlayer?.close()
         cuePlayer = null
         if (claimedSlot) consoleSlot.release(this)
@@ -580,7 +646,9 @@ class MainActivity : ComponentActivity() {
      * whether hardware echo cancellation is actually available and enabled on it. Barge-in is a
      * gate, not an assumption - so the verdict is logged every boot.
      */
-    private fun runAecSelfCheck() = lifecycleScope.launch {
+    // A suspend, not a launch: the check holds a capture session of its own, and run in line it has
+    // closed that session before a save that lands meanwhile can build a console beside it.
+    private suspend fun runAecSelfCheck() {
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         withContext(Dispatchers.IO) {
             MicPipeline(audioManager, AudioConfig()).use { mic ->
