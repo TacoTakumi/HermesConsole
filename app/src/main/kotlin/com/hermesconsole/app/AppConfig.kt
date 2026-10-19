@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -56,6 +57,11 @@ data class BackendSettings(
      * leaves it alone and [SettingsStore.saveVoiceVolume] writes it.
      */
     val voiceVolumePercent: Int = DEFAULT_VOICE_VOLUME_PERCENT,
+    /**
+     * Play speech and cues as media so a screen capture (scrcpy --audio-dup) records them. Off by
+     * default: the assistant usage is the console's tested path, and this is for demo takes.
+     */
+    val recordableAudio: Boolean = false,
 ) {
 
     /**
@@ -94,7 +100,7 @@ data class BackendSettings(
         "BackendSettings(hermes=$hermesHost:$hermesPort key=${hermesKey.presence()}, " +
             "vm=$vmHost:$vmPort key=${vmKey.presence()}, followUp=${followUpWindowSeconds}s, " +
             "session=${sessionTimeoutSeconds}s, screensaver=${screensaverTimeoutSeconds}s, " +
-            "voice=$voiceVolumePercent%)"
+            "voice=$voiceVolumePercent%, recordable=$recordableAudio)"
 
     private fun String.presence() = if (isBlank()) "unset" else "set"
 
@@ -196,6 +202,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
                 ?: BackendSettings.DEFAULT_SCREENSAVER_TIMEOUT_SECONDS,
             voiceVolumePercent = prefs[VOICE_VOLUME_PERCENT]
                 ?: BackendSettings.DEFAULT_VOICE_VOLUME_PERCENT,
+            recordableAudio = prefs[RECORDABLE_AUDIO] ?: false,
         )
     }
 
@@ -213,6 +220,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             prefs[FOLLOW_UP_WINDOW_S] = settings.followUpWindowSeconds
             prefs[SESSION_TIMEOUT_S] = settings.sessionTimeoutSeconds
             prefs[SCREENSAVER_TIMEOUT_S] = settings.screensaverTimeoutSeconds
+            prefs[RECORDABLE_AUDIO] = settings.recordableAudio
             // Not the voice volume: the settings screen saves without it, and a SAVE there must not
             // reset what was set by voice.
         }
@@ -234,6 +242,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val SESSION_TIMEOUT_S = intPreferencesKey("session_timeout_s")
         val SCREENSAVER_TIMEOUT_S = intPreferencesKey("screensaver_timeout_s")
         val VOICE_VOLUME_PERCENT = intPreferencesKey("voice_volume_percent")
+        val RECORDABLE_AUDIO = booleanPreferencesKey("recordable_audio")
     }
 }
 

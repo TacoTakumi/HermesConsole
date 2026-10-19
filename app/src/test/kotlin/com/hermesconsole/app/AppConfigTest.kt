@@ -54,6 +54,8 @@ class AppConfigTest {
         followUpWindowSeconds = 25,
         sessionTimeoutSeconds = 90,
         screensaverTimeoutSeconds = 150,
+        // Not the default, so a round trip that drops it fails.
+        recordableAudio = true,
     )
 
     // -- persistence --------------------------------------------------------------------------
@@ -136,6 +138,12 @@ class AppConfigTest {
     fun `a store without the voice volume reads full volume`() = runBlocking {
         // Every console upgraded from a build without the setting must keep speaking at its old level.
         assertEquals(100, storeIn(scope()).read().voiceVolumePercent)
+    }
+
+    @Test
+    fun `a store without the recordable setting plays on the assistant usage`() = runBlocking {
+        // Every console upgraded from a build without the setting keeps its tested playback path.
+        assertEquals(false, storeIn(scope()).read().recordableAudio)
     }
 
     @Test

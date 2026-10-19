@@ -29,6 +29,8 @@ class SettingsScreenTest {
         followUpWindowSeconds = 25,
         sessionTimeoutSeconds = 90,
         screensaverTimeoutSeconds = 150,
+        // Not the default, so a round trip that drops it fails.
+        recordableAudio = true,
     )
 
     /** The screen as it opens: every stored value already in its field. */

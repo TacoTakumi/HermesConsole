@@ -15,6 +15,15 @@
   keeps it across a restart. set_volume takes a percent or a direction (10
   points up or down) and replies with the level set. Voice does not go below
   10 percent, so the console stays audible.
+- Setting "recordable audio" on the config screen, off by default. On, the
+  console plays its speech, announcements and cues as media, so a screen
+  recording with scrcpy --audio-dup has the console's voice. Off, the console
+  plays as an assistant, which Android does not let a recording capture.
+  Cues change at once. Speech changes with its next audio track, so restart
+  the app after the change to be sure.
+- scripts/record-demo.sh records a demo: the tablet screen and audio through
+  scrcpy, and the room through a mic on the computer, mixed into one
+  demo.mp4.
 
 ### Changed
 

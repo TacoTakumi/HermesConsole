@@ -42,6 +42,7 @@ import com.hermesconsole.audio.MicPipeline
 import com.hermesconsole.audio.NativeSoftwareAec
 import com.hermesconsole.audio.OneShotSink
 import com.hermesconsole.audio.OutputGain
+import com.hermesconsole.audio.RecordablePlayback
 import com.hermesconsole.audio.SoftwareAec
 import com.hermesconsole.audio.TtsPlayer
 import com.hermesconsole.hermesclient.DeviceTool
@@ -124,6 +125,7 @@ class MainActivity : ComponentActivity() {
      * on voice turns them down together, live, without touching the media stream.
      */
     private val outputGain = OutputGain()
+    private val recordablePlayback = RecordablePlayback()
 
     /**
      * The persisted runtime config (T-23, REQ-28): every launch reads its backends from here,
@@ -178,8 +180,10 @@ class MainActivity : ComponentActivity() {
         // 45 ms chirp into a long-lived track starved it between taps and the restart ate the chirp
         // (measured on-device). Both resolve the same route, so the AEC coverage is identical.
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val sinks = AudioTrackSinkFactory(audioManager, AudioConfig(), outputGain).also { sinkFactory = it }
-        val cues = LcarsCuePlayer(AudioTrackOneShotSink(audioManager, AudioConfig(), outputGain)).also { cuePlayer = it }
+        val sinks = AudioTrackSinkFactory(audioManager, AudioConfig(), outputGain, recordablePlayback)
+            .also { sinkFactory = it }
+        val cues = LcarsCuePlayer(AudioTrackOneShotSink(audioManager, AudioConfig(), outputGain, recordablePlayback))
+            .also { cuePlayer = it }
 
         // The console's state: the live loop's the moment it exists (T-22), a READY constant
         // until then - which is exactly what an active but unengaged console shows (REQ-35).
@@ -199,7 +203,10 @@ class MainActivity : ComponentActivity() {
 
         // The stored voice level, applied to every console track at start and on each change.
         lifecycleScope.launch {
-            idleSettings.collect { outputGain.set(it.voiceVolumePercent / 100f) }
+            idleSettings.collect {
+                outputGain.set(it.voiceVolumePercent / 100f)
+                recordablePlayback.enabled = it.recordableAudio
+            }
         }
 
         // The console's idle clocks (T-21/T-16, REQ-22/REQ-16), owned here because the dim is the
@@ -472,6 +479,7 @@ class MainActivity : ComponentActivity() {
                 getSystemService(Context.AUDIO_SERVICE) as AudioManager,
                 AudioConfig(),
                 outputGain,
+                recordablePlayback,
             ),
             capture = mic,
             wake = WakeWordDetector(applicationContext),

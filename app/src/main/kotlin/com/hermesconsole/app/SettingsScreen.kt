@@ -63,6 +63,7 @@ internal data class SettingsDraft(
     val followUpWindow: String,
     val sessionTimeout: String,
     val screensaverTimeout: String,
+    val recordableAudio: Boolean,
 ) {
 
     /** The screen as it opens (REQ-17): every stored value already in its field. */
@@ -76,6 +77,7 @@ internal data class SettingsDraft(
         followUpWindow = initial.followUpWindowSeconds.toString(),
         sessionTimeout = initial.sessionTimeoutSeconds.toString(),
         screensaverTimeout = initial.screensaverTimeoutSeconds.toString(),
+        recordableAudio = initial.recordableAudio,
     )
 
     /** What SAVE persists, or null while any number does not parse or a key cannot go in a header. */
@@ -89,6 +91,7 @@ internal data class SettingsDraft(
         followUpWindowSeconds = parseFollowUpWindow(followUpWindow.trim()) ?: return null,
         sessionTimeoutSeconds = parseIdleTimeout(sessionTimeout.trim()) ?: return null,
         screensaverTimeoutSeconds = parseIdleTimeout(screensaverTimeout.trim()) ?: return null,
+        recordableAudio = recordableAudio,
     )
 }
 
@@ -202,6 +205,12 @@ fun SettingsScreen(
                         onValueChange = { draft = draft.copy(screensaverTimeout = it) },
                         keyboardType = KeyboardType.Number,
                         valid = parseIdleTimeout(draft.screensaverTimeout) != null,
+                    )
+                    // Speech and cues as media, so a screen capture records them (demo takes).
+                    LcarsPill(
+                        text = if (draft.recordableAudio) "recordable audio on" else "recordable audio off",
+                        color = if (draft.recordableAudio) LcarsColors.Orange else LcarsColors.Gray,
+                        onClick = { draft = draft.copy(recordableAudio = !draft.recordableAudio) },
                     )
                 }
             }

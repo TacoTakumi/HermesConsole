@@ -141,15 +141,16 @@ class AudioTrackSinkFactory(
     private val audioManager: AudioManager,
     private val config: AudioConfig = AudioConfig(),
     private val gain: OutputGain = OutputGain(),
+    private val recordable: RecordablePlayback = RecordablePlayback(),
 ) : AudioSinkFactory {
 
-    override fun create(sampleRateHz: Int): AudioSink =
-        AudioTrackSink(sampleRateHz, preferredOutputDevice(), playbackUsage(), gain)
-
     // Communication-path playback when the AEC needs a downlink reference (see AudioConfig).
-    private fun playbackUsage(): Int =
-        if (config.useCommunicationAudioMode) AudioAttributes.USAGE_VOICE_COMMUNICATION
-        else AudioAttributes.USAGE_ASSISTANT
+    override fun create(sampleRateHz: Int): AudioSink = AudioTrackSink(
+        sampleRateHz,
+        preferredOutputDevice(),
+        playbackUsage(config.useCommunicationAudioMode, recordable.enabled),
+        gain,
+    )
 
     fun availableOutputs(): List<AudioDeviceDescriptor> =
         audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.toDescriptor() }

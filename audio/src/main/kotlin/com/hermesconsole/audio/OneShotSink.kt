@@ -45,6 +45,7 @@ class AudioTrackOneShotSink(
     private val audioManager: AudioManager,
     private val config: AudioConfig = AudioConfig(),
     private val gain: OutputGain = OutputGain(),
+    private val recordable: RecordablePlayback = RecordablePlayback(),
 ) : OneShotSink {
 
     override fun play(pcm: ByteArray, sampleRateHz: Int) {
@@ -52,7 +53,9 @@ class AudioTrackOneShotSink(
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    // Never the communication path: cues stayed on the assistant usage through
+                    // that toggle's test, so only the recordable switch moves them.
+                    .setUsage(playbackUsage(communication = false, recordable = recordable.enabled))
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )
