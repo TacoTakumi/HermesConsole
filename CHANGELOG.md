@@ -21,9 +21,10 @@
   plays as an assistant, which Android does not let a recording capture.
   Cues change at once. Speech changes with its next audio track, so restart
   the app after the change to be sure.
-- scripts/record-demo.sh records a demo: the tablet screen and audio through
-  scrcpy, and the room through a mic on the computer, mixed into one
-  demo.mp4.
+- scripts/record-demo.sh records a demo through scrcpy: the tablet screen,
+  its playback and its mic, mixed into one demo.mp4. The mic is turned down
+  while the console speaks, so a reply is heard once. The script warns when
+  Android silenced the console's mic during the take.
 
 ### Changed
 
