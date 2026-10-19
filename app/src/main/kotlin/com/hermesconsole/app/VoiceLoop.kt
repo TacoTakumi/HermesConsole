@@ -109,11 +109,12 @@ class VoiceLoop(
      * passed on-device with the software echo canceller (T-11): speech over the console stops it, on the
      * cancelled stream. False is the half-duplex stopgap - the ZEF->ZGC OTA broke this device's hardware
      * AEC (docs/aec-spike.md, "The tenth"), so the console heard its own TTS and interrupted itself;
-     * false trades away voice-interrupt for a console that never cuts itself off. The toggle stays: a
-     * single point, set by MainActivity's BARGE_IN_ENABLED, flip-and-rebuild. The detector measures
-     * either way.
+     * false trades away voice-interrupt for a console that never cuts itself off. The toggle is the
+     * stored barge-in setting, read here at each detected barge-in - like [followUpWindowMillis], a
+     * supplier rather than a value - so a flip on the settings screen applies to the very next trip
+     * with nothing rebuilt. The detector measures either way.
      */
-    private val bargeInEnabled: Boolean = true,
+    private val bargeInEnabled: () -> Boolean = { true },
     /**
      * The software echo canceller's factory, or null to run raw capture (the stopgap and the
      * test harness default). One instance is created per capture session - here in [start], seeded
@@ -391,10 +392,10 @@ class VoiceLoop(
                 }
                 // Offered on every frame, whatever the state: playback exposure is what warms the
                 // canceller, and the detector cannot count what it is not shown. With barge-in enabled
-                // the verdict is acted on; the kill-switch can gate it again with one flip-and-rebuild.
+                // the verdict is acted on; the setting is read at the trip, so a flip gates the next one.
                 val wouldBargeIn = bargeIn.accept(cancelled, playing = speaking) && speaking
                 if (wouldBargeIn) {
-                    if (bargeInEnabled) onBargeIn() else logSuppressedBargeIn()
+                    if (bargeInEnabled()) onBargeIn() else logSuppressedBargeIn()
                 }
 
                 // T-12 self-barge trace (diagnostic, behind the stopgap): every ~1 s of capture log
@@ -917,7 +918,7 @@ class VoiceLoop(
     /**
      * The trip the stopgap swallowed.
      *
-     * `bargeInEnabled = false` suppresses the barge-in *action*, never the detection - and a
+     * Barge-in switched off suppresses the barge-in *action*, never the detection - and a
      * detection nobody records is a leak nobody can measure, on exactly the runs the stopgap is
      * kept for. This logs what [onBargeIn] logs at its own decision, in the same fields and the
      * same order, so a suppressed trip and a live one read line for line against each other.

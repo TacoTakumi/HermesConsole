@@ -142,6 +142,7 @@ class WallArtifactTurnTest {
             // reply, and any room noise in that window could start a turn that retires the pane
             // this test exists to photograph. The window is runtime config, not assembly.
             followUpWindowMillis = { 0L },
+            bargeInEnabled = { false },
             scope = scope,
         )
 

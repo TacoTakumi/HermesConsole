@@ -539,6 +539,7 @@ class MainActivity : ComponentActivity() {
             capture = mic,
             wake = WakeWordDetector(applicationContext),
             followUpWindowMillis = { settings.value.followUpWindowSeconds * 1_000L },
+            bargeInEnabled = { settings.value.bargeIn },
             // The software echo canceller (T-08, REQ-01/REQ-08): one native AEC3 session per
             // capture session, created at capture start. Whether the loop is given this factory at
             // all is WallConsole's SOFTWARE_AEC_ENABLED, beside the barge-in switch; handing it
@@ -705,6 +706,14 @@ internal class WallConsole(
     /** The follow-up window (REQ-40), read through to the loop at every reply's end. */
     followUpWindowMillis: () -> Long,
     /**
+     * Whether a detected barge-in is acted on: the stored setting, read through to the loop at
+     * each trip, so the settings toggle applies to the next one. Off by default while the echo
+     * dropout is diagnosed - a real barge-in flushes the reply and with it the evidence of the
+     * leak that fired it. Off, a trip is still detected and logged as `barge-in SUPPRESSED`, with
+     * the fields the live path logs, and the reply plays on to be measured.
+     */
+    bargeInEnabled: () -> Boolean,
+    /**
      * The software echo canceller's factory (T-08, REQ-01/REQ-08): one AEC3 session per capture
      * session, created by the loop at capture start and seeded with the measured output latency.
      * Null - the assembly tests - runs raw capture. The shipping wall wires the native
@@ -842,10 +851,10 @@ internal class WallConsole(
         // A MEDIA: line the model wrote instead of calling render_artifact: shown, never spoken.
         mediaTap = router::onMedia,
         cues = cues,
-        // The barge-in kill switch - one knob, flip-and-rebuild (see BARGE_IN_ENABLED). Off today:
-        // the half-duplex stopgap, while the hardware canceller's intermittent dropout is diagnosed.
-        // Trips are still detected and logged, they are just not acted on.
-        bargeInEnabled = BARGE_IN_ENABLED,
+        // The barge-in switch, the stored setting read at each trip: a flip on the settings screen
+        // applies to the next barge-in, with nothing rebuilt. Off, the half-duplex stopgap - trips
+        // are still detected and logged, they are just not acted on.
+        bargeInEnabled = bargeInEnabled,
         // The software AEC kill switch, beside the barge-in one (see SOFTWARE_AEC_ENABLED). Off
         // today: no AEC3 in the capture path, so the detector reads the hardware canceller's own
         // output and a dropout measurement is taken through one canceller, not two.
@@ -959,23 +968,6 @@ internal class WallConsole(
 
     private companion object {
         const val TAG = "HermesConsole"
-
-        /**
-         * The barge-in kill switch (2026-08-18). false = the half-duplex stopgap: the console cannot
-         * be interrupted mid-reply, and it never cuts itself off.
-         *
-         * False while the echo dropout is being diagnosed, and false *because* of the diagnosis, not
-         * only to protect the user. The detector runs either way - the gate measures every frame and
-         * a trip is logged as `barge-in SUPPRESSED` (VoiceLoop.logSuppressedBargeIn) with the same
-         * fields the live path logs. What the stopgap removes is the action, and the action is what
-         * destroys the evidence: a real barge-in flushes the track and ends the reply, so the leak
-         * that fired it is the last thing measurable about that turn. Suppressed, the reply plays on
-         * and the whole of it can be read.
-         *
-         * true = barge-in acts on what the detector sees. Flip it back once a reply can be spoken
-         * end to end with no suppressed trips in the log. One place to change, rebuild to take it.
-         */
-        const val BARGE_IN_ENABLED = false
 
         /**
          * The software AEC kill switch (2026-08-18). false = no AEC3 in the capture path: the

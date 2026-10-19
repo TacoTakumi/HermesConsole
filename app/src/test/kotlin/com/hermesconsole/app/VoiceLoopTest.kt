@@ -280,8 +280,9 @@ class VoiceLoopTest {
         // Overridable for the chunk-gap re-arm, which reasons about the wall-clock spacing between
         // PCM chunks; the default monotonic tick keeps every other test deterministic.
         now: () -> Long = { tick.incrementAndGet() },
-        // On by default (the design); the half-duplex stopgap wires it off.
-        bargeInEnabled: Boolean = true,
+        // On by default (the design); the half-duplex stopgap wires it off. A supplier, as the
+        // loop reads it: a test that flips it between two trips sees each read at its own trip.
+        bargeInEnabled: () -> Boolean = { true },
         // The software AEC factory (T-08): null by default, so every existing test runs raw
         // capture exactly as before; the AEC-wiring tests inject a fake through this seam.
         aecFactory: (() -> SoftwareAec?)? = null,
@@ -742,8 +743,8 @@ class VoiceLoopTest {
         val loop = TestScopeLoop(
             CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
             aecFactory = { aec },
-            // The shipped gate: BARGE_IN_ENABLED=false until on-device validation passes (REQ-13).
-            bargeInEnabled = false,
+            // The stored setting's default: barge-in off until on-device validation passes (REQ-13).
+            bargeInEnabled = { false },
         )
 
         capture.speak(speech())
@@ -762,7 +763,7 @@ class VoiceLoopTest {
         // the action is gated: the console keeps speaking and no cancel fires.
         val loop = TestScopeLoop(
             CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
-            bargeInEnabled = false,
+            bargeInEnabled = { false },
         )
 
         wake.fire()
@@ -784,6 +785,48 @@ class VoiceLoopTest {
         assertTrue(agent.stopped.isEmpty(), "the run is not stopped")
         assertEquals(0, sinks.single().stops, "the speaker is not flushed")
     }
+
+    @Test
+    fun `the barge-in setting is read at each detection, so a flip applies to the next trip`() =
+        runTest {
+            // The settings toggle, as the wall wires it: a read of the stored value, not a copy
+            // taken at construction. Off at the first trip, on by the second - in one loop, with
+            // nothing rebuilt between them.
+            var live = false
+            val loop = TestScopeLoop(
+                CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
+                bargeInEnabled = { live },
+            )
+
+            wake.fire()
+            voice.hear(0, "status report", endpointed = true)
+            runCurrent()
+            agent.emit(HermesEvent.MessageDelta("run-1", "All systems nominal. "))
+            voice.emit(TtsEvent.Start("req-1", 22_050))
+            voice.emit(TtsEvent.Audio(ByteArray(320), 22_050))
+            runCurrent()
+            assertEquals(ConsoleState.SPEAKING, loop.state.value)
+
+            // The first trip, with the setting off: measured, logged as suppressed, not acted on.
+            repeat(5) { capture.speak(speech()) }
+            runCurrent()
+            assertNull(loop.lastBargeIn.value, "off at the trip: no barge-in is recorded")
+            assertEquals(ConsoleState.SPEAKING, loop.state.value, "off at the trip: the reply plays on")
+            assertTrue(voice.ttsCancelled.isEmpty(), "off at the trip: synthesis is not cancelled")
+            assertTrue(agent.stopped.isEmpty(), "off at the trip: the run is not stopped")
+            assertEquals(0, sinks.single().stops, "off at the trip: the speaker is not flushed")
+
+            // The toggle flips mid-reply. The next trip - a breath, then another word - is acted on.
+            live = true
+            agent.runId = "run-2"
+            word()
+            runCurrent()
+            assertNotNull(loop.lastBargeIn.value, "on at the trip: the barge-in is recorded")
+            assertEquals(1, sinks.single().stops, "on at the trip: the speaker is flushed")
+            assertEquals(listOf("req-1"), voice.ttsCancelled, "on at the trip: synthesis is cancelled")
+            assertEquals(listOf("run-1"), agent.stopped, "on at the trip: the run is stopped")
+            assertEquals(ConsoleState.LISTENING, loop.state.value)
+        }
 
     @Test
     fun `a cold echo canceller cannot be barged in on`() = runTest {

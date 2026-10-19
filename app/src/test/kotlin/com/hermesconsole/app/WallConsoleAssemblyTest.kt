@@ -209,6 +209,7 @@ class WallConsoleAssemblyTest {
             capture = NoCapture(),
             wake = NoWake(),
             followUpWindowMillis = { 0L },
+            bargeInEnabled = { false },
             deviceTools = deviceTools,
             scope = scope,
         )
