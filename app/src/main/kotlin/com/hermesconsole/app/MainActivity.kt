@@ -63,6 +63,7 @@ import com.hermesconsole.voiceclient.fetchVoiceManagerInfo
 import java.time.LocalDateTime
 import com.hermesconsole.wakeword.WakeWordDetector
 import com.hermesconsole.wakeword.WakeWordSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -495,7 +496,28 @@ class MainActivity : ComponentActivity() {
                 if (firstEmission) runAecSelfCheck()
                 return@collectLatest
             }
-            wallConsole.value = buildWallConsole(backends, settings)
+            // A console that fails to build or start must not take the activity down with it: the
+            // console is HOME, so a crash relaunches on the same stored settings and crashes again.
+            // The failed start has already cleaned up after itself - startOwned's catch closed the
+            // half-built console and buildWallConsole's catch cancelled its scope - so the wall just
+            // stands by with no console, and the collector stays live for the next save. A
+            // cancellation is not a failure: it is collectLatest dropping a superseded build, or the
+            // activity going away, and it has to propagate for either to work.
+            wallConsole.value = try {
+                buildWallConsole(backends, settings)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Hosts and ports only, never the configs themselves: they carry the keys.
+                Log.e(
+                    TAG,
+                    "console could not start on hermes ${backends.hermes.host}:${backends.hermes.port}, " +
+                        "voice ${backends.voice.host}:${backends.voice.port}; " +
+                        "standing by until the settings change",
+                    e,
+                )
+                return@collectLatest
+            }
         }
     }
 
