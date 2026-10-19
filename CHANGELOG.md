@@ -15,7 +15,11 @@
   console's own speech, so at normal volume the console would cut itself off:
   turn it on only while the tablet speaker is quiet, for example in a demo
   take with record-demo.sh and MIC. A change applies to the next barge-in, with
-  no restart.
+  no restart. While the speaker is silent (recordable audio on, media volume
+  0) the convergence guard is skipped, so the first word over a reply stops
+  it; otherwise speech in the first 10 s after a start or reconnect, and in
+  the first 2 s of each reply, is still held back. The README has a new
+  Barge-in section.
 
 ### Fixed
 

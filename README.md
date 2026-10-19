@@ -23,11 +23,10 @@ against one home setup.
 - An appliance mode: the app is the HOME launcher, keeps the microphone in a
   foreground service, survives doze and screen-off, and has an idle
   screensaver.
-- Barge-in (interrupting a reply by speaking) is built but switched off
-  (`BARGE_IN_ENABLED` in `MainActivity.kt`). The tablet's hardware echo
-  canceller drops out under live playback, so the console can hear itself.
-  A software echo canceller (WebRTC AEC3) is wired in behind
-  `SOFTWARE_AEC_ENABLED`, also off.
+- Barge-in (interrupting a reply by speaking), off by default and switched
+  on from the settings screen (see "Barge-in" below). A software echo
+  canceller (WebRTC AEC3) is wired in behind `SOFTWARE_AEC_ENABLED` in
+  `MainActivity.kt`, off.
 
 ## Requirements
 
@@ -62,6 +61,40 @@ AudioProcessing library. To rebuild it from the pinned WebRTC revision, see
 3. Set the console as the HOME app when Android asks.
 
 Point the console at its own Hermes profile, set up as in the next section.
+
+## Barge-in
+
+Barge-in lets you stop a reply by speaking over it. It is off by default.
+Turn it on with the "barge-in" toggle on the settings screen; the change
+applies to the next reply, with no restart.
+
+Barge-in needs an echo canceller that removes the console's own voice from
+the microphone. If the canceller does not do this, the console hears itself
+and stops its own replies. Test this on your tablet before you leave
+barge-in on at normal volume: ask for a long answer and do not speak. If the
+reply stops by itself, turn barge-in off, or use it only while the tablet
+speaker is silent. On the SM-X210 the hardware canceller stopped working
+after a One UI update, so on that tablet barge-in is only usable with a
+silent speaker, for example in a demo take with `scripts/record-demo.sh` and
+`MIC` set. That script sets the media volume to 0 and plays the replies on
+the recording host.
+
+What to expect:
+
+- A convergence guard holds barge-in back while the echo canceller learns
+  the console's voice: for the first 10 s of the console's speech after the
+  app starts or the console reconnects, and for the first 2 s of each reply
+  after that. Speech in that time does not stop the reply. This is the
+  guard, not a fault: speak again after it and the reply stops.
+- While the tablet speaker is silent there is no echo, so the guard is
+  skipped and the first word over a reply stops it. The console treats the
+  speaker as silent when "recordable audio" is on and the tablet's media
+  volume is 0. With recordable audio off, the console does not play on the
+  media stream, and the guard stays on.
+- After a barge-in the console listens for your next request. If you say
+  nothing, it goes back to the ready screen.
+- With barge-in off, the console still detects speech over a reply and logs
+  it as `barge-in SUPPRESSED`, but the reply plays on.
 
 ## Console profile
 
