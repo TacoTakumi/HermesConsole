@@ -18,8 +18,8 @@ android {
         // Android 15 foreground-service rules are the baseline the app is written against
         // (REQ-27); compileSdk 36 keeps the Android 16 / One UI 8 OTA in view.
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.3.1"
+        versionCode = 6
+        versionName = "0.4.0"
         // The SM-X210 is arm64; no reason to carry the other ABIs.
         ndk { abiFilters += "arm64-v8a" }
         // The AEC hardware gate (T-04) runs here, not in :audio: since Android 12 a process with
