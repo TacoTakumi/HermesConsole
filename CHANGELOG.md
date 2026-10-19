@@ -33,6 +33,10 @@
   marks such a host and does not save it; a bad host already stored leaves the
   console standing by. A console that fails to start for any other reason is
   logged and the console stands by until the settings change.
+- With recordable audio on, the console's cues are whole in a screen recording
+  and on the recording host. The capture runs behind the speaker, and the end
+  of each cue (up to 150 ms) was lost; each cue now ends in 250 ms of silence
+  in recordable mode. The tablet speaker path is unchanged.
 
 ## [0.3.1]
 

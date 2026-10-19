@@ -50,12 +50,19 @@ class AudioTrackOneShotSink(
 
     override fun play(pcm: ByteArray, sampleRateHz: Int) {
         if (pcm.isEmpty()) return
+        val recordable = recordable.enabled
+        // A screen recording's playback capture runs behind the speaker: releasing the track when
+        // its head reaches the end cut the last 120-150 ms of every cue from the recording (and
+        // from what the recording host plays), while the speaker had all of it. Trailing silence
+        // gives the capture time to catch up, so the release cuts only silence. Recordable only,
+        // so the speaker path is exactly the clip.
+        val clip = if (recordable) pcm + ByteArray(2 * (sampleRateHz * RECORDABLE_TAIL_MS / 1000)) else pcm
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     // Never the communication path: cues stayed on the assistant usage through
                     // that toggle's test, so only the recordable switch moves them.
-                    .setUsage(playbackUsage(communication = false, recordable = recordable.enabled))
+                    .setUsage(playbackUsage(communication = false, recordable = recordable))
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build(),
             )
@@ -67,7 +74,7 @@ class AudioTrackOneShotSink(
                     .build(),
             )
             // Exactly the clip: a MODE_STATIC buffer is the sample, not a streaming window.
-            .setBufferSizeInBytes(pcm.size)
+            .setBufferSizeInBytes(clip.size)
             .setTransferMode(AudioTrack.MODE_STATIC)
             .build()
         try {
@@ -75,9 +82,9 @@ class AudioTrackOneShotSink(
             // A track per clip, so the shared gain is read fresh for every play.
             track.setVolume(gain.value)
             // Load the whole clip, then play it as one unit - no second write, nothing to run dry.
-            track.write(pcm, 0, pcm.size)
+            track.write(clip, 0, clip.size)
             track.play()
-            awaitPlayout(track, frames = pcm.size / 2, sampleRateHz = sampleRateHz)
+            awaitPlayout(track, frames = clip.size / 2, sampleRateHz = sampleRateHz)
         } finally {
             // Release only after playout: releasing a still-playing MODE_STATIC track cuts the clip.
             track.release()
@@ -100,6 +107,7 @@ class AudioTrackOneShotSink(
     private companion object {
         const val PLAYOUT_MARGIN_MS = 250L
         const val POLL_MS = 5L
+        const val RECORDABLE_TAIL_MS = 250
     }
 }
 
