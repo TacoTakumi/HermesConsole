@@ -22,9 +22,11 @@
   Cues change at once. Speech changes with its next audio track, so restart
   the app after the change to be sure.
 - scripts/record-demo.sh records a demo through scrcpy: the tablet screen,
-  its playback and its mic, mixed into one demo.mp4. The mic is turned down
-  while the console speaks, so a reply is heard once. The script warns when
-  Android silenced the console's mic during the take.
+  its playback and its mic, mixed into one demo.mp4. The mic hears the
+  tablet speaker about 0.3 s late, so the mix measures that lag, lines the
+  mic up and turns it down while the console speaks: a reply is heard once.
+  MIC_GAIN_DB raises the mic (default 12 dB). The script warns when Android
+  silenced the console's mic during the take.
 
 ### Changed
 
