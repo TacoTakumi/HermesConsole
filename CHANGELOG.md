@@ -10,6 +10,20 @@
   to 0 for the take and back after. The recording keeps the full level. The
   mic hears no reply, and the mix has no echo. Without MIC the script records the tablet
   mic as before.
+- Setting "barge-in" on the config screen, off by default. On, speech over a
+  reply stops it. The tablet's hardware echo canceller no longer removes the
+  console's own speech, so at normal volume the console would cut itself off:
+  turn it on only while the tablet speaker is quiet, for example in a demo
+  take with record-demo.sh and MIC. A change applies to the next barge-in, with
+  no restart.
+
+### Fixed
+
+- A saved change to the Hermes or VoiceManager connection settings now takes
+  effect at once: the console closes and starts again on the new settings, and
+  the session in progress ends. Before, the change needed an app restart. A
+  console that starts with no settings now starts when they are first saved.
+  A save that changes no connection setting leaves the console running.
 
 ## [0.3.1]
 
