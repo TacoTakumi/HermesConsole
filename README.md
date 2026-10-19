@@ -216,6 +216,37 @@ install steps.
 
 ## Layout
 
+    Android tablet
+    +-------------------------------------------------------------------+
+    | app - console shell, settings, mic foreground service             |
+    |                                                                   |
+    |  +---------------+   +---------------+   +---------------------+  |
+    |  | lcars         |   | wakeword      |   | audio               |  |
+    |  | LCARS panels, |   | sherpa-onnx   |   | capture, playback,  |  |
+    |  | artifacts     |   | keyword spot  |   | echo cancel         |  |
+    |  +---------------+   +---------------+   | (webrtc-sdk AEC3)   |  |
+    |                                          +---------------------+  |
+    |  +---------------------+   +----------------------------------+   |
+    |  | voiceclient         |   | hermesclient                     |   |
+    |  +----------+----------+   +--------+-----------------+-------+   |
+    +-------------|-----------------------|-----------------|-----------+
+                  |                       |                 |
+       WebSocket /ws/stream     POST /v1/runs,     WebSocket /v1/device/ws
+       16 kHz PCM up,           SSE events down    tablet dials out, tool
+       transcripts and                             calls in, results out
+       reply audio down                   |                 |
+                  |                       |                 |
+                  v                       v                 v
+    +-----------------------+   +----------------------------------------+
+    | VoiceManager          |   | Hermes gateway, console profile        |
+    | speech-to-text        |   | hermesconsole-gateway branch           |
+    | text-to-speech        |   | port 8643                              |
+    | port 8000             |   | plugins: render_artifact, device_tools |
+    +-----------------------+   +-------------------+--------------------+
+                                                    |
+                                                    v
+                                              model provider
+
 - `app` - the console shell. Composes the modules below.
 - `lcars` - the LCARS Compose design system. Knows nothing of the protocols.
 - `audio` - capture, playback and echo cancellation. Android, no UI.
