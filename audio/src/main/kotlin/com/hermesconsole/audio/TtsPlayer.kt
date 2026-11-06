@@ -151,6 +151,9 @@ class TtsPlayer(
     private val edgeLock = Any()
     private val edges = PlaybackEdgeTracker()
 
+    /** Whether the reply [requestId] is still playing (or queued to play) on this player. */
+    fun isPlaying(requestId: String): Boolean = synchronized(edgeLock) { edges.holds(requestId) }
+
     /** Report the edges the output has reached since the last call. Call it often (every capture frame). */
     fun pollEdges() {
         val open = sink ?: return

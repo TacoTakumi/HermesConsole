@@ -3,12 +3,15 @@ package com.hermesconsole.app
 import android.util.Log
 import com.hermesconsole.audio.AudioCapture
 import com.hermesconsole.audio.BargeInDetector
+import com.hermesconsole.audio.MicSampleClock
+import com.hermesconsole.audio.PlaybackEdge
 import com.hermesconsole.audio.ReferenceResampler
 import com.hermesconsole.audio.ReferencePacer
 import com.hermesconsole.audio.SerializedSoftwareAec
 import com.hermesconsole.audio.SoftwareAec
 import com.hermesconsole.audio.SpeechGate
 import com.hermesconsole.audio.TtsPlayer
+import com.hermesconsole.audio.replySamples
 import com.hermesconsole.audio.rmsDbfs
 import com.hermesconsole.hermesclient.HermesClient
 import com.hermesconsole.hermesclient.HermesEvent
@@ -222,6 +225,12 @@ class VoiceLoop(
     /** The session's finals that a dispatch or a drop already used, as (turn id, segment index). */
     private val usedFinals = mutableSetOf<Pair<Int, Int>>()
 
+    /** Places the player's edges on the mic stream this connection was sent. */
+    private val micClock = MicSampleClock()
+
+    /** The mic_sample each reply's playback start went out with, so its stop is never before it. */
+    private val playbackStarts = mutableMapOf<String, Long>()
+
     /**
      * The TTS request the console is currently having synthesised, or null between turns.
      *
@@ -391,6 +400,13 @@ class VoiceLoop(
                 // the ones VoiceManager has to transcribe to make it the next turn.
                 if (streamingToStt) voice.sendCapture(frame)
 
+                // The edges of the replies on the speaker, placed on the samples sent so far: the
+                // anchor moves with every frame sent, so recording that was never sent never counts.
+                if (turnEngineMode) {
+                    if (streamingToStt) micClock.anchor(capture.framesRead, voice.micSamplesSent)
+                    player.pollEdges()
+                }
+
                 // On the record, once per turn: a turn with capture audio flowing through it can
                 // never claim the mic path was disengaged (REQ-24). Gated on the state so a frame
                 // arriving between turns cannot mark the log of a turn already closed.
@@ -429,7 +445,8 @@ class VoiceLoop(
                 // canceller, and the detector cannot count what it is not shown. With barge-in enabled
                 // the verdict is acted on; the setting is read at the trip, so a flip gates the next one.
                 val wouldBargeIn = bargeIn.accept(cancelled, playing = speaking, speakerSilent) && speaking
-                if (wouldBargeIn) {
+                // In a turn engine session the server decides barge-in: a local trip is not acted on.
+                if (wouldBargeIn && !(inSession && turnEngineOn())) {
                     if (bargeInEnabled()) onBargeIn() else logSuppressedBargeIn()
                 }
 
@@ -469,6 +486,8 @@ class VoiceLoop(
         // The turn engine's frames are the link's, like the TTS stream: one collector each, for the
         // life of the loop, routed to whatever session is open when they land.
         scope.launch { voice.turnEnds.collect(::onTurnEnd) }
+        scope.launch { voice.barges.collect(::onServerBarge) }
+        if (turnEngineMode) player.edgeConsumer = ::onPlaybackEdge
         scope.launch { voice.turnEngineStatus.collect(::onTurnEngineStatus) }
     }
 
@@ -640,11 +659,69 @@ class VoiceLoop(
     }
 
     /**
+     * The server took the user's speech as a barge over [barge]'s reply. It has cancelled the
+     * request already - no tts_cancel, no more PCM - so the console stops the speaker (which sends
+     * the playback stop with what really played), stops the run if it is still writing, and goes
+     * back to listening: the user's words arrive as the next turn. A barge for a reply that is
+     * neither the current one nor still on the speaker is late or stale, and changes nothing.
+     */
+    @Synchronized
+    private fun onServerBarge(barge: Barge) {
+        if (!inSession || !turnEngineOn()) return
+        val current = ttsRequestId == barge.requestId
+        if (!current && !player.isPlaying(barge.requestId)) return
+
+        player.stopImmediately()
+        Log.i(TAG, "server barge over ${barge.requestId} -> LISTENING")
+        if (!current) return
+
+        // The reply was still being written: its run is answering a question nobody is listening to.
+        ttsRequestId = null
+        playingTts = false
+        val turn = _turn.value
+        val runId = turn.runId.takeIf { turn.runCompletedAtMillis == null }
+        turnJob?.cancel()
+        if (runId != null) {
+            scope.launch {
+                runCatching { agent.stop(runId) }
+                    .onFailure { Log.w(TAG, "barged run $runId did not stop: ${it.message}") }
+            }
+        }
+        _state.value = ConsoleState.LISTENING
+        startTurn { openSessionTurn() }
+    }
+
+    /** A reply's playback edge, sent to the server as a position on the mic stream it was sent. */
+    private fun onPlaybackEdge(edge: PlaybackEdge) {
+        val timeNs = edge.timeNs ?: System.nanoTime()
+        val micSample = capture.recordIndexAt(timeNs)?.let(micClock::micSampleAt) ?: voice.micSamplesSent
+        when (edge.event) {
+            PlaybackEdge.Event.START -> {
+                synchronized(playbackStarts) { playbackStarts[edge.requestId] = micSample }
+                voice.sendPlaybackStart(edge.requestId, micSample)
+            }
+            PlaybackEdge.Event.STOP -> {
+                val start = synchronized(playbackStarts) { playbackStarts.remove(edge.requestId) } ?: micSample
+                voice.sendPlaybackStop(
+                    edge.requestId,
+                    maxOf(micSample, start),
+                    replySamples(edge.playedFrames, edge.playedRateHz, edge.declaredRateHz),
+                )
+            }
+        }
+    }
+
+    /**
      * A new dial resets the server's turns and the transcript, so the session's bookkeeping starts
      * over and, if nothing is in flight, the session opens a turn on the new connection.
      */
     @Synchronized
     private fun onTurnEngineStatus(status: TurnEngineStatus) {
+        if (status == TurnEngineStatus.Pending) {
+            // A new connection counts its mic stream from zero.
+            micClock.reset()
+            synchronized(playbackStarts) { playbackStarts.clear() }
+        }
         if (!inSession || status != TurnEngineStatus.Pending) return
         sessionFirstTurn = null
         usedFinals.clear()
@@ -1249,7 +1326,8 @@ class VoiceLoop(
     private fun onTtsStart(event: TtsEvent.Start) {
         if (!isCurrent(event.requestId)) return
         // The rate is the turn's, not the device's (REQ-09) - it arrives on the wire.
-        player.onAudioStart(event.sampleRate)
+        // A turn engine reports each reply's playback edges, so the player tracks it by id.
+        player.onAudioStart(event.sampleRate, event.requestId.takeIf { turnEngineMode })
         // One resampler per reply, at the rate the tap actually emits (declared / decimation) - a
         // resampler built at the declared rate would mis-time a decimated track's reference (T-09,
         // REQ-04). The reply's End flushes the held-back tail and drops it; the next reply starts
@@ -1303,7 +1381,7 @@ class VoiceLoop(
     @Synchronized
     private fun onTtsEnd(event: TtsEvent.End) {
         if (!isCurrent(event.requestId)) return
-        player.onAudioEnd()
+        player.onAudioEnd(event.requestId.takeIf { turnEngineMode })
         // T-09: this reply's reference stream ends here. Flush the resampler's held-back tail
         // (zero-padded) into the pacer so the AEC saw the complete played reference, then drop the
         // resampler - the next reply builds a fresh one at its own rate (REQ-03, REQ-04). The

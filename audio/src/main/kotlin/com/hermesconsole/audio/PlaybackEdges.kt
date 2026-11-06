@@ -38,6 +38,9 @@ internal class PlaybackEdgeTracker {
         spans.addLast(Span(requestId, startFrame, declaredRateHz))
     }
 
+    /** Whether [requestId] is still on the sink: written, and its stop not yet reached. */
+    fun holds(requestId: String): Boolean = spans.any { it.requestId == requestId }
+
     fun end(requestId: String?, endFrame: Long) {
         spans.lastOrNull { it.endFrame == null && (requestId == null || it.requestId == requestId) }?.endFrame = endFrame
     }

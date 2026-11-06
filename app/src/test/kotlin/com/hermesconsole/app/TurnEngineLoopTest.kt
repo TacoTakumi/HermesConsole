@@ -179,19 +179,26 @@ class TurnEngineLoopTest {
             pcm.trySend(ByteArray(config.chunkBytes).also { it[0] = tag.toByte() })
         }
 
+        /** A frame of somebody talking loudly: what the local barge-in detector trips on. */
+        fun shout() {
+            framesRead += config.chunkBytes / 2
+            pcm.trySend(ByteArray(config.chunkBytes) { i -> if (i % 2 == 0) 0x40.toByte() else 0x1F })
+        }
+
         /** Record index at a time: 16 frames per ms from t = 0, so the test can predict mic_sample. */
         override fun recordIndexAt(timeNs: Long): Double = timeNs / 1_000_000.0 * 16
 
         override fun close() = Unit
     }
 
-    /** Presents frames as the test says; frame f is presented at f / rate seconds. */
+    /** Presents frames as the test says; frame f is presented at 2 s + f / rate. */
     class FakeSink(override val sampleRateHz: Int) : AudioSink {
         override var framesWritten = 0L
         var presented = 0L
         var stops = 0
         override val framesPresented: Long get() = presented
-        override fun presentationTimeOf(framePosition: Long): Long = framePosition * 1_000_000_000L / sampleRateHz
+        override fun presentationTimeOf(framePosition: Long): Long =
+            2_000_000_000L + framePosition * 1_000_000_000L / sampleRateHz
         override fun write(pcm: ByteArray) { framesWritten += pcm.size / 2 }
         override fun stop() { stops++ }
         override fun close() = Unit
@@ -429,5 +436,110 @@ class TurnEngineLoopTest {
         voice.turnEnd("approve next question")
         runCurrent()
         assertEquals(listOf("scan the sector", "next question"), agent.dispatched, "the dropped words stay out")
+    }
+
+    // -- barge-in and playback ------------------------------------------------------------------
+
+    /** A session with the run's reply on the speaker: dispatched, first delta out, audio playing. */
+    private fun TestScope.speaking(): VoiceLoop {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "long answer please")
+        voice.turnEnd("long answer please")
+        runCurrent()
+        agent.emit(HermesEvent.MessageDelta("run-1", "Once upon a time "))
+        runCurrent()
+        voice.emit(TtsEvent.Start("req-1", 24_000))
+        voice.emit(TtsEvent.Audio(ByteArray(4_800), 24_000))
+        runCurrent()
+        return loop
+    }
+
+    @Test
+    fun `a server barge stops the reply and the run without a tts_cancel`() = runTest {
+        val loop = speaking()
+        sinks.last().presented = 600
+        capture.speak()
+        runCurrent()
+
+        voice.barge("req-1")
+        runCurrent()
+
+        assertEquals(1, sinks.last().stops, "playback cleared")
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(emptyList<String>(), voice.ttsCancelled, "the server already cancelled it")
+        assertEquals(1, voice.playback.count { it.startsWith("stop req-1") }, "one stop")
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        assertTrue(LcarsCue.BARGE_IN !in cued)
+
+        // The interruption is the next turn.
+        voice.hear(1, "stop there")
+        voice.turnEnd("stop there")
+        runCurrent()
+        assertEquals(listOf("long answer please", "stop there"), agent.dispatched)
+    }
+
+    @Test
+    fun `a barge for another reply changes nothing`() = runTest {
+        val loop = speaking()
+        voice.barge("req-0")
+        runCurrent()
+
+        assertEquals(0, sinks.last().stops)
+        assertEquals(emptyList<String>(), agent.stopped)
+        assertEquals(ConsoleState.SPEAKING, loop.state.value)
+    }
+
+    @Test
+    fun `the local detector never stops a reply in turn engine mode`() = runTest {
+        val loop = speaking()
+        repeat(20) { capture.shout() }
+        runCurrent()
+
+        assertEquals(0, sinks.last().stops)
+        assertEquals(emptyList<String>(), voice.ttsCancelled)
+        assertEquals(ConsoleState.SPEAKING, loop.state.value)
+    }
+
+    @Test
+    fun `a reply played to its end reports its start and stop on the sent mic stream`() = runTest {
+        // One second recorded before the session, never sent: the clock must not count it.
+        capture.framesRead = 16_000
+        loop()
+        wake.fire()
+        runCurrent()
+        capture.speak()
+        runCurrent()
+        voice.hear(0, "short answer")
+        voice.turnEnd("short answer")
+        runCurrent()
+        agent.emit(HermesEvent.MessageDelta("run-1", "Aye."))
+        agent.emit(HermesEvent.RunCompleted("run-1"))
+        runCurrent()
+        voice.emit(TtsEvent.Start("req-1", 24_000))
+        voice.emit(TtsEvent.Audio(ByteArray(480), 24_000))
+        voice.emit(TtsEvent.End("req-1"))
+        runCurrent()
+
+        sinks.last().presented = 1
+        capture.speak()
+        runCurrent()
+        sinks.last().presented = 240
+        capture.speak()
+        runCurrent()
+
+        // Frame 0 plays at 2 s: record index 32000, which is 16000 past the first sent sample.
+        // Frame 240 plays 10 ms later. Each reply gets exactly one of each.
+        assertEquals(listOf("start req-1 16000", "stop req-1 16160 240"), voice.playback)
+    }
+
+    @Test
+    fun `a reply cut before it played reports nothing`() = runTest {
+        val loop = speaking()
+        voice.barge("req-1")
+        runCurrent()
+        assertEquals(emptyList<String>(), voice.playback)
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
     }
 }
