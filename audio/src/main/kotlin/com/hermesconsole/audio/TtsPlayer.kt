@@ -125,7 +125,7 @@ class TtsPlayer(
         declaredRateHz = sampleRateHz
         decimation = decimationFor(sampleRateHz)
         // Closing the old track cuts whatever of it was still queued: those replies stop here.
-        sink?.let { old -> deliver(synchronized(edgeLock) { edges.cut(old) }) }
+        sink?.let { old -> synchronized(edgeLock) { deliver(edges.cut(old)) } }
         sink?.close()
         val playedRateHz = sampleRateHz / decimation
         sink = sinkFactory.create(playedRateHz)
@@ -157,9 +157,13 @@ class TtsPlayer(
     /** Report the edges the output has reached since the last call. Call it often (every capture frame). */
     fun pollEdges() {
         val open = sink ?: return
-        deliver(synchronized(edgeLock) { edges.poll(open) })
+        synchronized(edgeLock) { deliver(edges.poll(open)) }
     }
 
+    /**
+     * Called under [edgeLock], so edges reach the consumer in the order they were reached even
+     * when a poll and a cut run on two threads: a reply's stop can never overtake its start.
+     */
     private fun deliver(reached: List<PlaybackEdge>) {
         val consumer = edgeConsumer ?: return
         reached.forEach(consumer)
@@ -240,7 +244,7 @@ class TtsPlayer(
     @Synchronized
     fun stopImmediately() {
         // Read what played before the track is flushed: the stop edges carry it.
-        sink?.let { open -> deliver(synchronized(edgeLock) { edges.cut(open) }) }
+        sink?.let { open -> synchronized(edgeLock) { deliver(edges.cut(open)) } }
         sink?.run { stop(); close() }
         sink = null
         declaredRateHz = null

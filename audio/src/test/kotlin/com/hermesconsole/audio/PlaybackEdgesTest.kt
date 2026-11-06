@@ -133,4 +133,31 @@ class PlaybackEdgesTest {
         player.pollEdges()
         assertTrue(edges.isEmpty())
     }
+
+    @Test
+    fun `a cut on another thread cannot deliver a stop before the start being delivered`() {
+        val inStart = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val seen = java.util.Collections.synchronizedList(mutableListOf<PlaybackEdge.Event>())
+        player.edgeConsumer = { edge ->
+            if (edge.event == PlaybackEdge.Event.START) {
+                inStart.countDown()
+                release.await(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            seen += edge.event
+        }
+        player.onAudioStart(24_000, "r-1")
+        player.onChunk(frames(4_800))
+        sink.presented = 1_200
+
+        val poller = Thread { player.pollEdges() }.apply { start() }
+        assertTrue(inStart.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        val cutter = Thread { player.stopImmediately() }.apply { start() }
+        cutter.join(300)
+        release.countDown()
+        poller.join(2_000)
+        cutter.join(2_000)
+
+        assertEquals(listOf(PlaybackEdge.Event.START, PlaybackEdge.Event.STOP), seen.toList())
+    }
 }
