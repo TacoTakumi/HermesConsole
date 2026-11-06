@@ -115,16 +115,51 @@ class TtsPlayer(
         get() = sink?.latencyMillis
 
     /** An `audio_start` frame arrived declaring [sampleRateHz]. */
-    fun onAudioStart(sampleRateHz: Int) {
+    fun onAudioStart(sampleRateHz: Int, requestId: String? = null) {
         // Reuse the track when the declared rate repeats - the common case in a steady conversation.
         // Compared against the *declared* rate, not the sink's rate, which may have been decimated.
-        if (sink != null && declaredRateHz == sampleRateHz) return
+        if (sink != null && declaredRateHz == sampleRateHz) {
+            track(requestId, sampleRateHz)
+            return
+        }
         declaredRateHz = sampleRateHz
         decimation = decimationFor(sampleRateHz)
+        // Closing the old track cuts whatever of it was still queued: those replies stop here.
+        sink?.let { old -> deliver(synchronized(edgeLock) { edges.cut(old) }) }
         sink?.close()
         val playedRateHz = sampleRateHz / decimation
         sink = sinkFactory.create(playedRateHz)
         Log.i(TAG, "audio_start declared=${sampleRateHz}Hz played=${playedRateHz}Hz decimation=$decimation")
+        track(requestId, sampleRateHz)
+    }
+
+    /** A reply with an id starts where the sink's writes stand now. */
+    private fun track(requestId: String?, declaredRateHz: Int) {
+        val open = sink ?: return
+        if (requestId == null) return
+        synchronized(edgeLock) { edges.begin(requestId, open.framesWritten, declaredRateHz) }
+    }
+
+    /**
+     * Where each reply's playback edges go: a start when its first frame is presented, a stop when
+     * its last frame played or when playback is cut. Fired from [pollEdges], [onAudioStart] and
+     * [stopImmediately], on the caller's thread.
+     */
+    @Volatile
+    var edgeConsumer: ((PlaybackEdge) -> Unit)? = null
+
+    private val edgeLock = Any()
+    private val edges = PlaybackEdgeTracker()
+
+    /** Report the edges the output has reached since the last call. Call it often (every capture frame). */
+    fun pollEdges() {
+        val open = sink ?: return
+        deliver(synchronized(edgeLock) { edges.poll(open) })
+    }
+
+    private fun deliver(reached: List<PlaybackEdge>) {
+        val consumer = edgeConsumer ?: return
+        reached.forEach(consumer)
     }
 
     /**
@@ -186,7 +221,10 @@ class TtsPlayer(
     }
 
     /** The turn's `audio_end` arrived. The track stays open: the next turn usually reuses the rate. */
-    fun onAudioEnd() = Unit
+    fun onAudioEnd(requestId: String? = null) {
+        val open = sink ?: return
+        synchronized(edgeLock) { edges.end(requestId, open.framesWritten) }
+    }
 
     /**
      * The exact PCM written to the sink is also delivered here (REQ-03), so the AEC sees the played
@@ -198,6 +236,8 @@ class TtsPlayer(
     /** Barge-in: the user spoke over us. Kill the audio now, don't drain it. */
     @Synchronized
     fun stopImmediately() {
+        // Read what played before the track is flushed: the stop edges carry it.
+        sink?.let { open -> deliver(synchronized(edgeLock) { edges.cut(open) }) }
         sink?.run { stop(); close() }
         sink = null
         declaredRateHz = null
