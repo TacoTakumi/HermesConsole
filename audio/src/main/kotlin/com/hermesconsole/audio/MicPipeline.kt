@@ -5,6 +5,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioTimestamp
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
@@ -33,6 +34,14 @@ class MicPipeline(
 
     /** The audio mode in force before we switched to communication mode, restored on [close]. */
     private var priorAudioMode: Int? = null
+
+    @Volatile
+    override var framesRead: Long = 0
+        private set
+
+    /** CLOCK_MONOTONIC time of the last read's return: the fallback anchor for [recordIndexAt]. */
+    @Volatile
+    private var lastReadNs: Long = 0
 
     /** Capture devices currently attached, in the module's own vocabulary. */
     fun availableDevices(): List<AudioDeviceDescriptor> =
@@ -83,6 +92,8 @@ class MicPipeline(
 
         val status = attachCanceler(audioRecord.audioSessionId, selected)
         applyNoiseSuppression(audioRecord.audioSessionId)
+        framesRead = 0
+        lastReadNs = 0
         audioRecord.startRecording()
         Log.i(TAG, status.describe())
         return status
@@ -125,8 +136,26 @@ class MicPipeline(
         while (currentCoroutineContext().isActive) {
             val read = audioRecord.read(buffer, 0, buffer.size)
             if (read <= 0) break
+            framesRead += read / BYTES_PER_FRAME
+            lastReadNs = System.nanoTime()
             emit(buffer.copyOf(read))
         }
+    }
+
+    /**
+     * AudioRecord.getTimestamp on CLOCK_MONOTONIC gives the capture time of a frame position
+     * (CDD 5.6 asks +-2 ms). Without one, the last read's return time stands in for the capture
+     * time of the frames read so far, which is late by however long they waited in the buffer.
+     */
+    override fun recordIndexAt(timeNs: Long): Double? {
+        val audioRecord = record ?: return null
+        val ts = AudioTimestamp()
+        val reported = runCatching {
+            audioRecord.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS
+        }.getOrDefault(false)
+        if (reported) return frameAtTime(timeNs, ts.framePosition, ts.nanoTime, config.sampleRateHz)
+        if (lastReadNs == 0L) return null
+        return frameAtTime(timeNs, framesRead, lastReadNs, config.sampleRateHz)
     }
 
     override fun close() {
@@ -154,6 +183,7 @@ class MicPipeline(
 
     private companion object {
         const val TAG = "MicPipeline"
+        const val BYTES_PER_FRAME = 2
     }
 }
 

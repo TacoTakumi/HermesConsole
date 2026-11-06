@@ -44,7 +44,8 @@ class AudioTrackSink(
         }
 
     /** Total frames written to the track since it was built, for the latency math (REQ-05). */
-    private var framesWritten = 0L
+    override var framesWritten = 0L
+        private set
 
     private val latencyEstimator = OutputLatencyEstimator()
 
@@ -76,6 +77,32 @@ class AudioTrackSink(
      * than a failing one.
      */
     val framesPlayed: Int get() = track.playbackHeadPosition
+
+    /**
+     * The presentation clock: getTimestamp's frame and time when the track reports one (CDD 5.6
+     * asks +-2 ms), else the head position read now. The head position runs ahead of the DAC by
+     * the output path's latency, so the fallback is the looser answer.
+     */
+    private fun presentationAnchor(): Pair<Long, Long> {
+        val ts = AudioTimestamp()
+        val reported = runCatching { track.getTimestamp(ts) }.getOrDefault(false)
+        return if (reported) {
+            ts.framePosition to ts.nanoTime
+        } else {
+            (track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL) to System.nanoTime()
+        }
+    }
+
+    override val framesPresented: Long
+        get() {
+            val (frame, ns) = presentationAnchor()
+            return frameAtTime(System.nanoTime(), frame, ns, sampleRateHz).toLong().coerceIn(0, framesWritten)
+        }
+
+    override fun presentationTimeOf(framePosition: Long): Long? {
+        val (frame, ns) = presentationAnchor()
+        return timeOfFrame(framePosition, frame, ns, sampleRateHz)
+    }
     val routedDeviceName: String? get() = track.routedDevice?.productName?.toString()
 
     /**

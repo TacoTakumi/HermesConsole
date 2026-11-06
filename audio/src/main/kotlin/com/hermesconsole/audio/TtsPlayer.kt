@@ -28,6 +28,18 @@ interface AudioSink : AutoCloseable {
      * exists yet (the AEC is simply not seeded; its own delay controller tracks from zero).
      */
     val latencyMillis: Int? get() = null
+
+    /** Frames accepted by [write] since the sink opened. */
+    val framesWritten: Long get() = 0
+
+    /** Frames presented at the output so far, as best the sink can tell. */
+    val framesPresented: Long get() = 0
+
+    /**
+     * The CLOCK_MONOTONIC time at which frame [framePosition] (counted like [framesWritten]) is,
+     * or was, presented at the output; null when the sink cannot say.
+     */
+    fun presentationTimeOf(framePosition: Long): Long? = null
 }
 
 fun interface AudioSinkFactory {

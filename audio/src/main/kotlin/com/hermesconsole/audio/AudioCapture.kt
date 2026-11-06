@@ -14,4 +14,16 @@ interface AudioCapture : AutoCloseable {
 
     /** Raw PCM chunks of [AudioConfig.chunkBytes], in the configured format. */
     fun frames(): Flow<ByteArray>
+
+    /**
+     * Frames the recorder has delivered since capture started, at the end of the frame most
+     * recently emitted by [frames]. Zero for a capture that does not count them.
+     */
+    val framesRead: Long get() = 0
+
+    /**
+     * The recorder's (fractional) frame index captured at [timeNs] on CLOCK_MONOTONIC, or null
+     * when the capture cannot say. Lets a speaker edge be placed on the recorded stream.
+     */
+    fun recordIndexAt(timeNs: Long): Double? = null
 }
