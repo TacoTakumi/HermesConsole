@@ -96,6 +96,41 @@ What to expect:
 - With barge-in off, the console still detects speech over a reply and logs
   it as `barge-in SUPPRESSED`, but the reply plays on.
 
+## Turn engine mode
+
+The "voice mode" setting on the config screen chooses how the console takes
+turns. Classic, the default, is everything above: the console ends a turn
+when VoiceManager's speech-to-text ends an utterance, and does barge-in
+itself. Turn engine mode lets VoiceManager's turn engine (Tyger) decide when
+your turn ended and when you cut in over a reply. It needs a VoiceManager
+with the turn engine on (`VM_TURN_ENGINE=tyger`) and the audiocpp
+speech-to-text engine; see "Server-side barge-in" in the VoiceManager README.
+For speakers, also turn on its pre-filter (`VM_TYGER_PREFILTER=voxlock`).
+
+What changes in turn engine mode:
+
+- On the main screen the wake word works as before, and no audio leaves the
+  tablet. The wake word, or a tap into a session, opens a session.
+- In a session the mic streams to VoiceManager all the time. There is no
+  follow-up window and no listening timeout between replies. Leaving the
+  session screen ends the session, and so does the session timeout counted
+  from the end of the last turn.
+- Speak over a reply and VoiceManager stops it. The barge-in setting above
+  has no effect in this mode. With the pre-filter on, VoiceManager first
+  learns your voice from about 3 s of speech, so you cannot cut into the
+  first reply of a connection.
+- Words that end while Hermes is still working are dropped, so a stray word
+  does not cancel the reply. Say it again after the reply. "Approve" and
+  "deny" still answer an approval.
+- If VoiceManager refuses the turn engine or loses it, the console goes on in
+  classic mode until it reconnects.
+
+The console tells VoiceManager where each reply played on the mic stream it
+sends. The tablet's audio timestamps leave out a fixed echo path delay,
+which is set in the audio config (445 ms, measured on the SM-X210). On other
+hardware, or after an OS update, measure it again with
+`scripts/connected-test.sh MicSampleLoopbackTest`.
+
 ## Console profile
 
 Run the console on a Hermes profile of its own, served by its own gateway

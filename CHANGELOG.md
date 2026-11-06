@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.0]
+
+### Added
+
+- Setting "voice mode" on the config screen: classic (the default, the
+  console as before) or turn engine. Turn engine mode hands the end of each
+  turn and barge-in to VoiceManager's turn engine (Tyger). It needs a
+  VoiceManager with `VM_TURN_ENGINE=tyger` and the audiocpp STT engine. A
+  change rebuilds the console on new connections, as a host change does.
+- In turn engine mode the wake word on the main screen, or a tap into a
+  session, opens a session. The mic sends nothing before that, and the wake
+  word itself is not sent. A session streams the mic until you leave the
+  session screen or the session timeout ends it: there is no follow-up
+  window and no close beep between turns. A turn is sent to Hermes when the
+  server says it ended; words that end while Hermes works are dropped, so a
+  stray word never cancels a reply. Approve and deny still answer an
+  approval.
+- In turn engine mode the server stops a reply you speak over. The console
+  clears its playback and stops the run; the local barge-in detector and the
+  barge-in setting have no effect, and the config screen says so. The console
+  tells the server where each reply started and stopped playing on the mic
+  stream it sends, corrected by the tablet's echo path delay (445 ms on the
+  SM-X210, measured by MicSampleLoopbackTest).
+- In turn engine mode the "Approval required." line is spoken on the
+  session's own connection, so the server keeps its echo out of the turn.
+- If VoiceManager refuses the turn engine or loses it, the console goes on
+  in classic mode on that connection and opts in again on the next one.
+
 ## [0.4.0]
 
 ### Added
