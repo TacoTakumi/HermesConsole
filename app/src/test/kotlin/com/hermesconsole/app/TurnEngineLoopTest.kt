@@ -54,6 +54,19 @@ class TurnEngineLoopTest {
         val status = MutableStateFlow<TurnEngineStatus>(TurnEngineStatus.Ready)
         override val turnEngineStatus: StateFlow<TurnEngineStatus> get() = status
 
+        val dialCount = MutableStateFlow(1L)
+        override val dials: StateFlow<Long> get() = dialCount
+
+        /**
+         * The link redials so fast the status never shows Pending: the server's turns and segment
+         * indexes start over, and the transcript with them.
+         */
+        fun reconnect() {
+            openTurn = 0
+            transcriptState.value = Transcript()
+            dialCount.value++
+        }
+
         private val turnEndsIn = Channel<TurnEnd>(Channel.UNLIMITED)
         override val turnEnds: Flow<TurnEnd> = turnEndsIn.consumeAsFlow()
 
@@ -694,5 +707,28 @@ class TurnEngineLoopTest {
     fun `outside a turn engine session the loop leaves the line to its own link`() = runTest {
         val loop = loop(turnEngineMode = false)
         assertFalse(loop.announce("Approval required."))
+    }
+
+    // -- a reconnect inside a session -----------------------------------------------------------
+
+    @Test
+    fun `a reconnect that never shows Pending still starts the session's turns over`() = runTest {
+        loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "first")
+        voice.turnEnd("first")
+        runCurrent()
+        reply("run-1", "req-1")
+
+        voice.reconnect()
+        runCurrent()
+        assertEquals(1, voice.currentTurn, "the session opened a turn on the new connection")
+
+        // The new connection numbers its turns and segments from the start again.
+        voice.hear(0, "second", turnId = 1)
+        voice.turnEnd("second", turnId = 1)
+        runCurrent()
+        assertEquals(listOf("first", "second"), agent.dispatched)
     }
 }

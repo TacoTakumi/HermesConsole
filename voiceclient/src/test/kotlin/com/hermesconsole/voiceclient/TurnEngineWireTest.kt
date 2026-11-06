@@ -248,4 +248,14 @@ class TurnEngineWireTest {
         assertNull(withTimeoutOrNull(300) { received.receive() })
         assertTrue(client.micSamplesSent == 320L)
     }
+
+    @Test
+    fun `every dial raises the dial count`() = runBlocking<Unit> {
+        client = clientWith(turnEngine = true)
+        val socket = connect()
+        val first = client.dials.value
+        socket.close(1001, "going away")
+        withTimeout(5_000) { serverSocket.receive() }
+        withTimeout(5_000) { client.dials.first { it > first } }
+    }
 }

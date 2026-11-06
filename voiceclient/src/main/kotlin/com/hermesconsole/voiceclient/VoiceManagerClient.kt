@@ -69,6 +69,15 @@ class VoiceManagerClient(
      */
     val turnEngineStatus: StateFlow<TurnEngineStatus> = _turnEngineStatus.asStateFlow()
 
+    private val _dials = MutableStateFlow(0L)
+
+    /**
+     * How many times the client has dialled. Each dial is a new connection with its own turn
+     * numbering, transcript and mic stream; a consumer that keeps state per connection resets it
+     * on every change. A status can pass through Pending too fast to be seen; this cannot.
+     */
+    val dials: StateFlow<Long> = _dials.asStateFlow()
+
     private val turnEndEvents = Channel<TurnEnd>(Channel.UNLIMITED)
 
     /** The server's turn ends, in wire order. One consumer, like [tts]. */
@@ -240,6 +249,7 @@ class VoiceManagerClient(
         generation++
         drainStaleState()
         _turnEngineStatus.value = if (config.turnEngine) TurnEngineStatus.Pending else TurnEngineStatus.Off
+        _dials.value++
         _state.value = VoiceLinkState.Connecting
         socket = http.newWebSocket(request.build(), listenerFor(generation))
     }

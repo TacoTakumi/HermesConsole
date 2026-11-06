@@ -503,6 +503,7 @@ class VoiceLoop(
         scope.launch { voice.barges.collect(::onServerBarge) }
         if (turnEngineMode) player.edgeConsumer = ::onPlaybackEdge
         scope.launch { voice.turnEngineStatus.collect(::onTurnEngineStatus) }
+        scope.launch { voice.dials.collect { onNewConnection() } }
     }
 
     /**
@@ -763,21 +764,25 @@ class VoiceLoop(
         }
     }
 
-    /**
-     * A new dial resets the server's turns and the transcript, so the session's bookkeeping starts
-     * over and, if nothing is in flight, the session opens a turn on the new connection.
-     */
+    /** A refusal or a loss of the turn engine hands an open session to the classic loop. */
     @Synchronized
     private fun onTurnEngineStatus(status: TurnEngineStatus) {
-        if (status == TurnEngineStatus.Pending) {
-            // A new connection counts its mic stream from zero.
-            micClock.reset()
-            synchronized(playbackStarts) { playbackStarts.clear() }
-        }
         if (inSession && (status is TurnEngineStatus.Refused || status == TurnEngineStatus.Lost)) {
-            return fallBackToClassic(status)
+            fallBackToClassic(status)
         }
-        if (!inSession || status != TurnEngineStatus.Pending) return
+    }
+
+    /**
+     * A new dial: its mic stream counts from zero, and the server's turns, segment indexes and
+     * transcript start over, so the session's bookkeeping starts over and, if nothing is in
+     * flight, the session opens a turn on the new connection. Keyed on the dial count rather than
+     * on a Pending status, which a fast redial can pass through unseen.
+     */
+    @Synchronized
+    private fun onNewConnection() {
+        micClock.reset()
+        synchronized(playbackStarts) { playbackStarts.clear() }
+        if (!inSession) return
         sessionFirstTurn = null
         usedFinals.clear()
         if (_state.value == ConsoleState.LISTENING) startTurn { openSessionTurn() }
@@ -1695,6 +1700,9 @@ interface VoiceLink {
     /** Mic samples sent on the current connection: the index a playback edge is placed on. */
     val micSamplesSent: Long get() = 0
 
+    /** Rises on every new connection: the server's turns, transcript and mic stream start over. */
+    val dials: StateFlow<Long> get() = NO_DIALS
+
     /** A reply's first sample reached the speaker at [micSample] on the sent mic stream. */
     fun sendPlaybackStart(requestId: String, micSample: Long) = Unit
 
@@ -1703,6 +1711,7 @@ interface VoiceLink {
 }
 
 private val NO_TURN_ENGINE: StateFlow<TurnEngineStatus> = MutableStateFlow(TurnEngineStatus.Off)
+private val NO_DIALS: StateFlow<Long> = MutableStateFlow(0L)
 
 /** What the loop needs from Hermes. See [VoiceLink] for why this is a port. */
 interface Agent {
@@ -1735,6 +1744,7 @@ fun VoiceManagerClient.asVoiceLink(): VoiceLink = object : VoiceLink {
     override val turnEnds: Flow<TurnEnd> get() = this@asVoiceLink.turnEnds
     override val barges: Flow<Barge> get() = this@asVoiceLink.barges
     override val micSamplesSent: Long get() = this@asVoiceLink.micSamplesSent
+    override val dials: StateFlow<Long> get() = this@asVoiceLink.dials
 
     override fun sendPlaybackStart(requestId: String, micSample: Long) =
         this@asVoiceLink.sendPlaybackStart(requestId, micSample)
