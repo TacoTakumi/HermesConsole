@@ -86,6 +86,44 @@ class IdleControllerTest {
     }
 
     @Test
+    fun `a turn engine session listening between turns counts as idle`() = runTest {
+        val state = MutableStateFlow(ConsoleState.LISTENING)
+        val idle = controller(state, sessionListening = { true })
+
+        advanceTimeBy(TIMEOUT - 1)
+        assertFalse(idle.visitOver.value)
+        advanceTimeBy(2)
+        assertTrue(idle.visitOver.value, "an idle session ends after the session timeout")
+    }
+
+    @Test
+    fun `a turn in a turn engine session holds and restarts the countdown`() = runTest {
+        val state = MutableStateFlow(ConsoleState.LISTENING)
+        val idle = controller(state, sessionListening = { true })
+
+        advanceTimeBy(TIMEOUT - 1)
+        state.value = ConsoleState.THINKING
+        advanceTimeBy(TIMEOUT * 3)
+        assertFalse(idle.visitOver.value, "a run in a session is not idle")
+        state.value = ConsoleState.SPEAKING
+        advanceTimeBy(TIMEOUT)
+        state.value = ConsoleState.LISTENING
+
+        advanceTimeBy(TIMEOUT - 1)
+        assertFalse(idle.visitOver.value, "the countdown starts over when the turn ends")
+        advanceTimeBy(2)
+        assertTrue(idle.visitOver.value)
+    }
+
+    @Test
+    fun `a classic floor listening is not idle`() = runTest {
+        val state = MutableStateFlow(ConsoleState.LISTENING)
+        val idle = controller(state)
+        advanceTimeBy(TIMEOUT * 3)
+        assertFalse(idle.visitOver.value)
+    }
+
+    @Test
     fun `an engaged console never idles, however long the turn runs`() = runTest {
         val state = MutableStateFlow(ConsoleState.READY)
         val idle = controller(state)
@@ -450,8 +488,10 @@ class IdleControllerTest {
         state: StateFlow<ConsoleState>,
         session: () -> Long = { TIMEOUT },
         screensaver: () -> Long = { TIMEOUT },
+        sessionListening: () -> Boolean = { false },
     ) = IdleController(
         state = state,
+        sessionListening = sessionListening,
         scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler)),
         sessionTimeoutMillis = session,
         screensaverTimeoutMillis = screensaver,

@@ -57,6 +57,12 @@ class IdleController(
     /** How long the wall stays lit with nobody in front of it (REQ-22). The longer of the two. */
     private val screensaverTimeoutMillis: () -> Long = { DEFAULT_SCREENSAVER_TIMEOUT_MILLIS },
     private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * Whether a turn engine session is open and listening with no turn in progress. Its mic is
+     * open the whole session, so its LISTENING is the session's idle, and counts like READY.
+     * Read whenever the state moves, as a session opens and every turn ends with a state change.
+     */
+    private val sessionListening: () -> Boolean = { false },
 ) {
 
     private val _idle = MutableStateFlow(false)
@@ -107,7 +113,10 @@ class IdleController(
      */
     private suspend fun countdown(timeoutMillis: () -> Long, what: String, elapsed: () -> Unit) {
         merge(touches, state.map { }).collectLatest {
-            if (state.value != ConsoleState.READY) {
+            val current = state.value
+            val quiet = current == ConsoleState.READY ||
+                (current == ConsoleState.LISTENING && sessionListening())
+            if (!quiet) {
                 // Engaged. If the screen was dark this is the wake word arriving - the loop took
                 // the turn without ever knowing about the screensaver.
                 sign(of = "wake")

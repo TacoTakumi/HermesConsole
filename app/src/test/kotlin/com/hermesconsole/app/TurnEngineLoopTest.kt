@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicLong
@@ -627,5 +628,27 @@ class TurnEngineLoopTest {
         runCurrent()
         assertClassicTurn(loop, "run-2", "req-2")
         assertEquals(before, voice.playback.size)
+    }
+
+    // -- the idle clock --------------------------------------------------------------------------
+
+    @Test
+    fun `the loop says when a session is listening with no turn in progress`() = runTest {
+        val loop = loop()
+        assertFalse(loop.sessionListening)
+        wake.fire()
+        runCurrent()
+        assertTrue(loop.sessionListening)
+
+        voice.hear(0, "report")
+        voice.turnEnd("report")
+        runCurrent()
+        assertFalse(loop.sessionListening, "a turn is in progress")
+
+        reply("run-1", "req-1")
+        assertTrue(loop.sessionListening)
+
+        loop.abort()
+        assertFalse(loop.sessionListening)
     }
 }

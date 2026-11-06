@@ -227,6 +227,8 @@ class MainActivity : ComponentActivity() {
             scope = lifecycleScope,
             sessionTimeoutMillis = { idleSettings.value.sessionTimeoutSeconds * 1_000L },
             screensaverTimeoutMillis = { idleSettings.value.screensaverTimeoutSeconds * 1_000L },
+            // A turn engine session listens the whole time; between its turns it is idle.
+            sessionListening = { wallConsole.value?.loop?.sessionListening == true },
         ).also { it.start() }
 
         // The visit ends in the same silence, two minutes ahead of the screen (T-08/T-16, REQ-07):

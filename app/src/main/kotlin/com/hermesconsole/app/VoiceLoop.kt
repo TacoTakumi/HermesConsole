@@ -215,6 +215,9 @@ class VoiceLoop(
     @Volatile
     private var inSession = false
 
+    /** A turn engine session is open and listening, with no turn in progress: the session's idle. */
+    val sessionListening: Boolean get() = inSession && _state.value == ConsoleState.LISTENING
+
     /**
      * The first server turn this session (on this connection) opened. A final stamped with an
      * earlier turn belongs to before the session and never joins a prompt. Null until the
