@@ -14,7 +14,10 @@ import com.hermesconsole.hermesclient.HermesClient
 import com.hermesconsole.hermesclient.HermesEvent
 import com.hermesconsole.hermesclient.dispatchInSession
 import com.hermesconsole.lcars.LcarsCue
+import com.hermesconsole.voiceclient.Barge
 import com.hermesconsole.voiceclient.Transcript
+import com.hermesconsole.voiceclient.TurnEnd
+import com.hermesconsole.voiceclient.TurnEngineStatus
 import com.hermesconsole.voiceclient.TtsEvent
 import com.hermesconsole.voiceclient.VoiceManagerClient
 import kotlinx.coroutines.CancellationException
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -1382,7 +1386,30 @@ interface VoiceLink {
 
     /** Stop synthesising [requestId]: the human is talking (REQ-04). */
     fun cancelTts(requestId: String)
+
+    /**
+     * The current connection's standing with VoiceManager's turn engine. A link that does not
+     * speak it is always [TurnEngineStatus.Off].
+     */
+    val turnEngineStatus: StateFlow<TurnEngineStatus> get() = NO_TURN_ENGINE
+
+    /** The server's turn ends on an opted-in connection, in wire order. */
+    val turnEnds: Flow<TurnEnd> get() = emptyFlow()
+
+    /** The server's barges on an opted-in connection, in wire order. */
+    val barges: Flow<Barge> get() = emptyFlow()
+
+    /** Mic samples sent on the current connection: the index a playback edge is placed on. */
+    val micSamplesSent: Long get() = 0
+
+    /** A reply's first sample reached the speaker at [micSample] on the sent mic stream. */
+    fun sendPlaybackStart(requestId: String, micSample: Long) = Unit
+
+    /** A reply stopped at [micSample] after [replySample] samples played, at its audio_start rate. */
+    fun sendPlaybackStop(requestId: String, micSample: Long, replySample: Long) = Unit
 }
+
+private val NO_TURN_ENGINE: StateFlow<TurnEngineStatus> = MutableStateFlow(TurnEngineStatus.Off)
 
 /** What the loop needs from Hermes. See [VoiceLink] for why this is a port. */
 interface Agent {
@@ -1410,6 +1437,17 @@ fun VoiceManagerClient.asVoiceLink(): VoiceLink = object : VoiceLink {
         this@asVoiceLink.sendTtsText(requestId, text, done)
 
     override fun cancelTts(requestId: String) = this@asVoiceLink.cancelTts(requestId)
+
+    override val turnEngineStatus: StateFlow<TurnEngineStatus> get() = this@asVoiceLink.turnEngineStatus
+    override val turnEnds: Flow<TurnEnd> get() = this@asVoiceLink.turnEnds
+    override val barges: Flow<Barge> get() = this@asVoiceLink.barges
+    override val micSamplesSent: Long get() = this@asVoiceLink.micSamplesSent
+
+    override fun sendPlaybackStart(requestId: String, micSample: Long) =
+        this@asVoiceLink.sendPlaybackStart(requestId, micSample)
+
+    override fun sendPlaybackStop(requestId: String, micSample: Long, replySample: Long) =
+        this@asVoiceLink.sendPlaybackStop(requestId, micSample, replySample)
 }
 
 /**
