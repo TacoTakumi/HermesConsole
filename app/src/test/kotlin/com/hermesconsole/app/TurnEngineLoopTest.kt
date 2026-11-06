@@ -542,4 +542,90 @@ class TurnEngineLoopTest {
         assertEquals(emptyList<String>(), voice.playback)
         assertEquals(ConsoleState.LISTENING, loop.state.value)
     }
+
+    // -- fallback to classic ---------------------------------------------------------------------
+
+    /**
+     * After [status], the loop takes a whole turn the classic way: the endpoint dispatches, a
+     * local trip stops the reply, the follow-up window holds the floor and then closes it, and no
+     * playback frame goes out.
+     */
+    private fun TestScope.assertClassicTurn(loop: VoiceLoop, runId: String, requestId: String) {
+        voice.hear(10, "classic question")
+        runCurrent()
+        assertEquals("classic question", agent.dispatched.last(), "the endpoint dispatched it")
+
+        agent.emit(HermesEvent.MessageDelta(runId, "A long reply "))
+        runCurrent()
+        voice.emit(TtsEvent.Start(requestId, 24_000))
+        voice.emit(TtsEvent.Audio(ByteArray(4_800), 24_000))
+        runCurrent()
+        sinks.last().presented = 600
+        repeat(20) { capture.shout() }
+        runCurrent()
+        assertEquals(listOf(requestId), voice.ttsCancelled, "the local detector barged in")
+        assertEquals(emptyList<String>(), voice.playback.filter { requestId in it }, "no playback frames")
+        assertTrue(LcarsCue.BARGE_IN in cued)
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+    }
+
+    private fun TestScope.refusedBeforeTheWake(refusal: String) {
+        voice.status.value = TurnEngineStatus.Refused(refusal)
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        assertClassicTurn(loop, "run-1", "req-1")
+    }
+
+    @Test
+    fun `turn_engine_unavailable before the wake runs the classic loop`() = runTest {
+        refusedBeforeTheWake("turn_engine_unavailable")
+    }
+
+    @Test
+    fun `turn_engine_unsupported before the wake runs the classic loop`() = runTest {
+        refusedBeforeTheWake("turn_engine_unsupported")
+    }
+
+    @Test
+    fun `invalid_request for the opt-in runs the classic loop`() = runTest {
+        refusedBeforeTheWake("invalid_request")
+    }
+
+    @Test
+    fun `a refusal while the session waits hands it to the classic loop`() = runTest {
+        voice.status.value = TurnEngineStatus.Pending
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.status.value = TurnEngineStatus.Refused("turn_engine_unavailable")
+        runCurrent()
+        assertClassicTurn(loop, "run-1", "req-1")
+    }
+
+    @Test
+    fun `a lost turn engine mid-session falls back, follow-up window included`() = runTest {
+        val loop = loop(followUpWindowMillis = { 1_000 })
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "first question")
+        voice.turnEnd("first question")
+        runCurrent()
+        voice.status.value = TurnEngineStatus.Lost
+        runCurrent()
+        reply("run-1", "req-1")
+
+        // The classic end of a spoken reply: the follow-up window, then READY behind the wake word.
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        testScheduler.advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertTrue(LcarsCue.LISTENING_CLOSED in cued)
+
+        val before = voice.playback.size
+        wake.fire()
+        runCurrent()
+        assertClassicTurn(loop, "run-2", "req-2")
+        assertEquals(before, voice.playback.size)
+    }
 }

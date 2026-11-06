@@ -691,8 +691,24 @@ class VoiceLoop(
         startTurn { openSessionTurn() }
     }
 
+    /**
+     * The connection was refused the turn engine, or lost it, mid-session: from here it is a plain
+     * connection, so the session hands over to the classic loop. A turn in flight ends the classic
+     * way (endpoint, local barge-in, follow-up window); an idle session becomes a classic floor,
+     * which closes behind the wake word in its own time.
+     */
+    private fun fallBackToClassic(status: TurnEngineStatus) {
+        Log.i(TAG, "turn engine $status mid-session: the classic loop takes over")
+        inSession = false
+        sessionFirstTurn = null
+        usedFinals.clear()
+        if (_state.value == ConsoleState.LISTENING) startTurn { dispatchWhatIsSaidNext(WAKE_WINDOW_MILLIS) }
+    }
+
     /** A reply's playback edge, sent to the server as a position on the mic stream it was sent. */
     private fun onPlaybackEdge(edge: PlaybackEdge) {
+        // A connection refused the turn engine, or one that lost it, is a plain connection.
+        if (!turnEngineOn()) return
         val timeNs = edge.timeNs ?: System.nanoTime()
         val micSample = capture.recordIndexAt(timeNs)?.let(micClock::micSampleAt) ?: voice.micSamplesSent
         when (edge.event) {
@@ -721,6 +737,9 @@ class VoiceLoop(
             // A new connection counts its mic stream from zero.
             micClock.reset()
             synchronized(playbackStarts) { playbackStarts.clear() }
+        }
+        if (inSession && (status is TurnEngineStatus.Refused || status == TurnEngineStatus.Lost)) {
+            return fallBackToClassic(status)
         }
         if (!inSession || status != TurnEngineStatus.Pending) return
         sessionFirstTurn = null
@@ -1327,7 +1346,7 @@ class VoiceLoop(
         if (!isCurrent(event.requestId)) return
         // The rate is the turn's, not the device's (REQ-09) - it arrives on the wire.
         // A turn engine reports each reply's playback edges, so the player tracks it by id.
-        player.onAudioStart(event.sampleRate, event.requestId.takeIf { turnEngineMode })
+        player.onAudioStart(event.sampleRate, event.requestId.takeIf { turnEngineOn() })
         // One resampler per reply, at the rate the tap actually emits (declared / decimation) - a
         // resampler built at the declared rate would mis-time a decimated track's reference (T-09,
         // REQ-04). The reply's End flushes the held-back tail and drops it; the next reply starts
@@ -1381,7 +1400,7 @@ class VoiceLoop(
     @Synchronized
     private fun onTtsEnd(event: TtsEvent.End) {
         if (!isCurrent(event.requestId)) return
-        player.onAudioEnd(event.requestId.takeIf { turnEngineMode })
+        player.onAudioEnd(event.requestId.takeIf { turnEngineOn() })
         // T-09: this reply's reference stream ends here. Flush the resampler's held-back tail
         // (zero-padded) into the pacer so the AEC saw the complete played reference, then drop the
         // resampler - the next reply builds a fresh one at its own rate (REQ-03, REQ-04). The
