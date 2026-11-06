@@ -29,6 +29,15 @@ data class AudioConfig(
      */
     val noiseSuppression: Boolean = true,
     /**
+     * The delay the platform's timestamps leave out between a played frame's reported presentation
+     * time and the moment its sound is in the captured stream. Measured on the SM-X210 with the
+     * console's own output and capture paths (a chirp played while the track runs, located in the
+     * capture: 441 to 453 ms on 5 runs). A turn engine is told where each reply played on the mic
+     * stream, so this is added to every presentation time. Re-measure with MicSampleLoopbackTest
+     * after an OS update or on other hardware.
+     */
+    val echoPathDelayMs: Int = 445,
+    /**
      * DISABLED by default: a tested and refuted hypothesis, kept as a toggle, not a fix.
      *
      * The idea was that a 48 kHz AudioTrack (audiocpp's native-rate output) took a direct output path

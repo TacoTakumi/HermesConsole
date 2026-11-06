@@ -19,6 +19,8 @@ class AudioTrackSink(
     // (docs/aec-spike.md "The tenth"); USAGE_ASSISTANT is the pre-OTA media-path default.
     usage: Int = AudioAttributes.USAGE_ASSISTANT,
     private val gain: OutputGain = OutputGain(),
+    /** Added to every presentation time: the delay the timestamps do not report (AudioConfig.echoPathDelayMs). */
+    private val echoPathDelayMs: Int = 0,
 ) : AudioSink {
 
     private val track: AudioTrack = AudioTrack.Builder()
@@ -101,7 +103,7 @@ class AudioTrackSink(
 
     override fun presentationTimeOf(framePosition: Long): Long? {
         val (frame, ns) = presentationAnchor()
-        return timeOfFrame(framePosition, frame, ns, sampleRateHz)
+        return timeOfFrame(framePosition, frame, ns, sampleRateHz) + echoPathDelayMs * 1_000_000L
     }
     val routedDeviceName: String? get() = track.routedDevice?.productName?.toString()
 
@@ -177,6 +179,7 @@ class AudioTrackSinkFactory(
         preferredOutputDevice(),
         playbackUsage(config.useCommunicationAudioMode, recordable.enabled),
         gain,
+        config.echoPathDelayMs,
     )
 
     fun availableOutputs(): List<AudioDeviceDescriptor> =
