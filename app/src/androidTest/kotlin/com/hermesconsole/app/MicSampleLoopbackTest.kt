@@ -73,6 +73,20 @@ class MicSampleLoopbackTest {
         Log.i(TAG, "FIRST-FRAME offsets ms: ${offsets.describe()}")
     }
 
+    /**
+     * The common case in a session: the second reply on a track that stayed open and ran dry
+     * between replies. A silent first reply opens the track, the track idles, then the measured
+     * reply plays on it.
+     */
+    @Test
+    fun a_reply_on_a_reused_track_lands_within_one_turn_engine_frame() = runBlocking<Unit> {
+        val offsets = atNormalVolume { (1..RUNS).map { measureOnce(leadInMs = LEAD_IN_MS, idleTrackMs = 10_000) } }
+        Log.i(TAG, "REUSED offsets ms: ${offsets.describe()}")
+        val passes = offsets.count { it != null && abs(it) <= LIMIT_MS }
+        Log.i(TAG, "VERDICT reused ${if (passes == RUNS) "PASS" else "FAIL"} ($passes/$RUNS within $LIMIT_MS ms)")
+        assertTrue("a reply on a reused track landed more than $LIMIT_MS ms from its predicted place: $offsets", passes == RUNS)
+    }
+
     private suspend fun <T> atNormalVolume(block: suspend () -> T): T {
         val prior = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -85,7 +99,7 @@ class MicSampleLoopbackTest {
     }
 
     /** Detected chirp onset minus predicted, in ms; null when either is missing. */
-    private suspend fun measureOnce(leadInMs: Int): Double? = withContext(Dispatchers.Default) {
+    private suspend fun measureOnce(leadInMs: Int, idleTrackMs: Long = 0): Double? = withContext(Dispatchers.Default) {
         val config = AudioConfig()
         val mic = MicPipeline(audioManager, config)
         mic.start()
@@ -97,7 +111,20 @@ class MicSampleLoopbackTest {
 
         val start = AtomicReference<PlaybackEdge?>(null)
         val player = TtsPlayer(AudioTrackSinkFactory(audioManager, config), config)
-        player.edgeConsumer = { edge -> if (edge.event == PlaybackEdge.Event.START) start.compareAndSet(null, edge) }
+        player.edgeConsumer = { edge ->
+            if (edge.event == PlaybackEdge.Event.START && edge.requestId == "chirp") start.compareAndSet(null, edge)
+        }
+        if (idleTrackMs > 0) {
+            // A silent reply opens the track; then the track runs dry while the console waits.
+            player.onAudioStart(CHIRP_RATE, "opener")
+            player.onChunk(ByteArray(CHIRP_RATE / 2))
+            player.onAudioEnd("opener")
+            val until = System.nanoTime() + (idleTrackMs + 500) * 1_000_000
+            while (System.nanoTime() < until) {
+                player.pollEdges()
+                delay(20)
+            }
+        }
         player.onAudioStart(CHIRP_RATE, "chirp")
         val poller = launch {
             while (start.get() == null) {
