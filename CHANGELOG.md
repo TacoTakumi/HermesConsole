@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1]
+
+### Changed
+
+- The build runs on JDK 25 as well as JDK 21: Gradle 9.1.0 and Android Gradle
+  Plugin 9.0.1, which compiles Kotlin itself. App behaviour is unchanged.
+
 ## [0.5.0]
 
 ### Added
