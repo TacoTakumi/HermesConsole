@@ -1,8 +1,10 @@
 package com.hermesconsole.app
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import com.hermesconsole.lcars.LcarsColors
 import org.junit.jupiter.api.Test
 
 /**
@@ -68,6 +70,16 @@ class SettingsScreenTest {
         assertEquals("barge-in by server", bargeInLabel(opened))
         assertEquals("barge-in on", bargeInLabel(opened.copy(voiceMode = VoiceMode.CLASSIC)))
         assertEquals("barge-in off", bargeInLabel(opened.copy(voiceMode = VoiceMode.CLASSIC, bargeIn = false)))
+    }
+
+    @Test
+    fun `the voice mode control names both modes and lights both`() {
+        // FU-40: a gray "voice mode classic" read as the mode being off.
+        val classic = opened.copy(voiceMode = VoiceMode.CLASSIC)
+        assertEquals("mode: turn engine", voiceModeLabel(opened))
+        assertEquals("mode: classic", voiceModeLabel(classic))
+        assertNotEquals(LcarsColors.Gray, voiceModeColor(opened))
+        assertNotEquals(LcarsColors.Gray, voiceModeColor(classic))
     }
 
     @Test

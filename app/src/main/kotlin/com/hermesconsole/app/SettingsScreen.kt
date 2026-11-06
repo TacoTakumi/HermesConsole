@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -115,10 +116,19 @@ internal fun bargeInLabel(draft: SettingsDraft): String = when {
     else -> "barge-in off"
 }
 
-/** The voice mode control's label. */
+/**
+ * The voice mode control's label. It names a choice of two modes, so classic does not read as
+ * "voice mode off" (FU-40).
+ */
 internal fun voiceModeLabel(draft: SettingsDraft): String = when (draft.voiceMode) {
-    VoiceMode.CLASSIC -> "voice mode classic"
-    VoiceMode.TURN_ENGINE -> "voice mode turn engine"
+    VoiceMode.CLASSIC -> "mode: classic"
+    VoiceMode.TURN_ENGINE -> "mode: turn engine"
+}
+
+/** The voice mode control's color. Both modes are lit: the inert gray would read as off (FU-40). */
+internal fun voiceModeColor(draft: SettingsDraft): Color = when (draft.voiceMode) {
+    VoiceMode.CLASSIC -> LcarsColors.IceBlue
+    VoiceMode.TURN_ENGINE -> LcarsColors.Orange
 }
 
 /** A host the screen may save: blank (not typed yet) or one the HTTP client would dial. */
@@ -252,7 +262,7 @@ fun SettingsScreen(
                     // engine ends turns and handles barge-in, and a session streams the mic.
                     LcarsPill(
                         text = voiceModeLabel(draft),
-                        color = if (draft.voiceMode == VoiceMode.TURN_ENGINE) LcarsColors.Orange else LcarsColors.Gray,
+                        color = voiceModeColor(draft),
                         onClick = {
                             draft = draft.copy(
                                 voiceMode = if (draft.voiceMode == VoiceMode.CLASSIC) VoiceMode.TURN_ENGINE else VoiceMode.CLASSIC,
