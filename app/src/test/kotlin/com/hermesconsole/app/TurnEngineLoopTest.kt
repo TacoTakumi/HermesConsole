@@ -312,4 +312,94 @@ class TurnEngineLoopTest {
         assertEquals(listOf(1, 2), voice.turnsOpened)
         assertTrue(loop.state.value == ConsoleState.LISTENING)
     }
+
+    // -- turns ---------------------------------------------------------------------------------
+
+    /** One whole spoken reply for [runId]: a delta, the run's end, the reply's audio and its end. */
+    private fun TestScope.reply(runId: String, requestId: String, text: String = "Aye.") {
+        agent.emit(HermesEvent.MessageDelta(runId, text))
+        agent.emit(HermesEvent.RunCompleted(runId))
+        runCurrent()
+        voice.emit(TtsEvent.Start(requestId, 24_000))
+        voice.emit(TtsEvent.Audio(ByteArray(480), 24_000))
+        voice.emit(TtsEvent.End(requestId))
+        runCurrent()
+    }
+
+    @Test
+    fun `a final alone dispatches nothing, the turn_end does`() = runTest {
+        loop()
+        wake.fire()
+        runCurrent()
+
+        voice.hear(0, "status report")
+        runCurrent()
+        assertEquals(emptyList<String>(), agent.dispatched, "an endpointed final is not the end of the turn")
+
+        voice.hear(1, "on the warp core")
+        voice.turnEnd("status report on the warp core")
+        runCurrent()
+        assertEquals(listOf("status report on the warp core"), agent.dispatched)
+    }
+
+    @Test
+    fun `a turn_end that holds only a final from before the session dispatches nothing`() = runTest {
+        loop()
+        voice.hear(0, "left over", turnId = 0)
+        wake.fire()
+        runCurrent()
+
+        voice.turnEnd("left over", turnId = 0)
+        runCurrent()
+        assertEquals(emptyList<String>(), agent.dispatched)
+
+        voice.hear(1, "now this")
+        voice.turnEnd("left over now this")
+        runCurrent()
+        assertEquals(listOf("now this"), agent.dispatched, "the prompt is the session's own words")
+    }
+
+    @Test
+    fun `after a reply the session keeps listening with the stream on and opens the next turn`() = runTest {
+        val loop = loop(followUpWindowMillis = { 1_000 })
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "red alert")
+        voice.turnEnd("red alert")
+        runCurrent()
+        reply("run-1", "req-1")
+
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        assertEquals(listOf(1, 2), voice.turnsOpened, "a new server turn after the reply")
+        assertEquals(listOf(LcarsCue.LISTENING_OPEN), cued, "no close cue between turns")
+
+        // Well past the follow-up window: nothing closes the floor.
+        testScheduler.advanceTimeBy(60_000)
+        runCurrent()
+        capture.speak(9)
+        runCurrent()
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        assertEquals(9, sentTags().last())
+
+        voice.hear(1, "belay that")
+        voice.turnEnd("belay that")
+        runCurrent()
+        assertEquals(listOf("red alert", "belay that"), agent.dispatched)
+    }
+
+    @Test
+    fun `a run that says nothing still hands the floor back in the session`() = runTest {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "lights")
+        voice.turnEnd("lights")
+        runCurrent()
+        agent.emit(HermesEvent.RunCompleted("run-1"))
+        runCurrent()
+
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+        assertEquals(listOf(1, 2), voice.turnsOpened)
+        assertEquals(listOf(LcarsCue.LISTENING_OPEN), cued)
+    }
 }

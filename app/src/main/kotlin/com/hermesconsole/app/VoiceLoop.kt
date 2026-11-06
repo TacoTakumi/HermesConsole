@@ -21,7 +21,6 @@ import com.hermesconsole.voiceclient.TurnEngineStatus
 import com.hermesconsole.voiceclient.TtsEvent
 import com.hermesconsole.voiceclient.VoiceManagerClient
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -212,6 +211,16 @@ class VoiceLoop(
     /** A turn engine session is open: the mic streams until it ends, whatever the turns do. */
     @Volatile
     private var inSession = false
+
+    /**
+     * The first server turn this session (on this connection) opened. A final stamped with an
+     * earlier turn belongs to before the session and never joins a prompt. Null until the
+     * session's first turn_start is acked, and again after a reconnect resets the server's turns.
+     */
+    private var sessionFirstTurn: Int? = null
+
+    /** The session's finals that a dispatch or a drop already used, as (turn id, segment index). */
+    private val usedFinals = mutableSetOf<Pair<Int, Int>>()
 
     /**
      * The TTS request the console is currently having synthesised, or null between turns.
@@ -456,6 +465,11 @@ class VoiceLoop(
         scope.launch {
             voice.tts.collect(::onTtsEvent)
         }
+
+        // The turn engine's frames are the link's, like the TTS stream: one collector each, for the
+        // life of the loop, routed to whatever session is open when they land.
+        scope.launch { voice.turnEnds.collect(::onTurnEnd) }
+        scope.launch { voice.turnEngineStatus.collect(::onTurnEngineStatus) }
     }
 
     /**
@@ -526,6 +540,8 @@ class VoiceLoop(
         streamingToStt = false
         wake.reset()
         _state.value = ConsoleState.READY
+        sessionFirstTurn = null
+        usedFinals.clear()
         // A session's stream stopping is the one stop-listening a turn engine session has.
         if (inSession) {
             inSession = false
@@ -582,13 +598,57 @@ class VoiceLoop(
      * only leaving the session ends it.
      */
     private suspend fun runSession() {
+        openSessionTurn()
+        cue(LcarsCue.LISTENING_OPEN)
+    }
+
+    /** Open the next server turn of the session, asking again until the link acks one. */
+    private suspend fun openSessionTurn(): Int {
         var turnId: Int? = null
         while (turnId == null) {
             turnId = withTimeoutOrNull(SESSION_TURN_START_RETRY_MILLIS) { openTurn() }
             if (turnId == null) delay(SESSION_TURN_START_RETRY_MILLIS)
         }
-        cue(LcarsCue.LISTENING_OPEN)
-        awaitCancellation()
+        synchronized(this) { if (sessionFirstTurn == null) sessionFirstTurn = turnId }
+        return turnId
+    }
+
+    /**
+     * The server says the user's turn ended. Its text joins every final since its last turn end,
+     * whatever turn they belong to, so the prompt is built here from the session's own unused
+     * finals and the frame is only the signal. Only a listening session dispatches: words that end
+     * while Hermes works or speaks are dropped, so a stray word never cancels a reply.
+     */
+    @Synchronized
+    private fun onTurnEnd(end: TurnEnd) {
+        if (!inSession || !turnEngineOn()) return
+        val first = sessionFirstTurn ?: return
+        val fresh = voice.transcript.value.segments.filter {
+            it.isFinal && it.turnId >= first && it.text.isNotBlank() && (it.turnId to it.index) !in usedFinals
+        }
+        if (fresh.isEmpty()) return
+        usedFinals += fresh.map { it.turnId to it.index }
+        val text = Transcript(fresh).text
+        if (_state.value != ConsoleState.LISTENING) {
+            Log.i(TAG, "turn_end while ${_state.value}: dropped \"$text\"")
+            return
+        }
+        Log.i(TAG, "turn_end (${end.by}) -> dispatch")
+        retireTurn()
+        _turn.update { if (it.prompt.isBlank() && it.reply.isBlank()) it.copy(prompt = text) else TurnLog(prompt = text) }
+        startTurn { runTurn(text) }
+    }
+
+    /**
+     * A new dial resets the server's turns and the transcript, so the session's bookkeeping starts
+     * over and, if nothing is in flight, the session opens a turn on the new connection.
+     */
+    @Synchronized
+    private fun onTurnEngineStatus(status: TurnEngineStatus) {
+        if (!inSession || status != TurnEngineStatus.Pending) return
+        sessionFirstTurn = null
+        usedFinals.clear()
+        if (_state.value == ConsoleState.LISTENING) startTurn { openSessionTurn() }
     }
 
     private fun retireTurn() {
@@ -1282,6 +1342,15 @@ class VoiceLoop(
     private fun endTurn(repliedAloud: Boolean = false) {
         playingTts = false
         ttsRequestId = null
+
+        // A session has no window to close: the floor is open until the session ends, and the
+        // next server turn opens now, while the reply's echo is still held back from the STT.
+        if (inSession) {
+            _state.value = ConsoleState.LISTENING
+            Log.i(TAG, "turn done -> LISTENING (session): ${_turn.value.summary()}")
+            startTurn { openSessionTurn() }
+            return
+        }
         // The turn's own audio must not be what wakes the console for the next one (REQ-05).
         wake.reset()
 
