@@ -160,4 +160,52 @@ class PlaybackEdgesTest {
 
         assertEquals(listOf(PlaybackEdge.Event.START, PlaybackEdge.Event.STOP), seen.toList())
     }
+
+    /** A track another thread released: every read of its position throws. */
+    private class ReleasedSink(override val sampleRateHz: Int) : AudioSink {
+        override var framesWritten = 0L
+        var released = false
+        var presented = 0L
+        override val framesPresented: Long get() = if (released) throw IllegalStateException("released") else presented
+        override fun presentationTimeOf(framePosition: Long): Long =
+            if (released) throw IllegalStateException("released") else 0
+        override fun write(pcm: ByteArray) { framesWritten += pcm.size / 2 }
+        override fun stop() = Unit
+        override fun close() = Unit
+    }
+
+    @Test
+    fun `a poll over a track that was released elsewhere neither throws nor reports`() {
+        val released = mutableListOf<ReleasedSink>()
+        val p = TtsPlayer({ rate -> ReleasedSink(rate).also { released += it } })
+        val got = mutableListOf<PlaybackEdge>()
+        p.edgeConsumer = { got += it }
+        p.onAudioStart(24_000, "r-1")
+        p.onChunk(frames(2_400))
+        released.single().released = true
+
+        p.pollEdges()
+        p.stopImmediately()
+
+        assertTrue(got.isEmpty())
+    }
+
+    @Test
+    fun `a started reply still gets its stop when its track was released before the cut`() {
+        val released = mutableListOf<ReleasedSink>()
+        val p = TtsPlayer({ rate -> ReleasedSink(rate).also { released += it } })
+        val got = mutableListOf<PlaybackEdge>()
+        p.edgeConsumer = { got += it }
+        p.onAudioStart(24_000, "r-1")
+        p.onChunk(frames(4_800))
+        released.single().presented = 600
+        p.pollEdges()
+        released.single().released = true
+
+        p.stopImmediately()
+
+        assertEquals(listOf(PlaybackEdge.Event.START, PlaybackEdge.Event.STOP), got.map { it.event })
+        assertEquals(600L, got.last().playedFrames)
+        assertEquals(null, got.last().timeNs, "the sink could not say when")
+    }
 }

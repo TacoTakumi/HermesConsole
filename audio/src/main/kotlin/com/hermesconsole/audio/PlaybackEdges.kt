@@ -34,6 +34,9 @@ internal class PlaybackEdgeTracker {
 
     private val spans = ArrayDeque<Span>()
 
+    /** The presented position the last poll or cut read: where a cut stops when the sink cannot say. */
+    private var lastPresented = 0L
+
     fun begin(requestId: String, startFrame: Long, declaredRateHz: Int) {
         spans.addLast(Span(requestId, startFrame, declaredRateHz))
     }
@@ -49,6 +52,7 @@ internal class PlaybackEdgeTracker {
     fun poll(sink: AudioSink): List<PlaybackEdge> {
         val out = mutableListOf<PlaybackEdge>()
         val presented = sink.framesPresented
+        lastPresented = presented
         while (spans.isNotEmpty()) {
             val span = spans.first()
             val end = span.endFrame
@@ -81,6 +85,20 @@ internal class PlaybackEdgeTracker {
             if (!span.started) out += span.edge(PlaybackEdge.Event.START, sink, span.startFrame)
             val stopAt = minOf(presented, span.endFrame ?: sink.framesWritten)
             out += span.edge(PlaybackEdge.Event.STOP, sink, stopAt)
+        }
+        spans.clear()
+        return out
+    }
+
+    /**
+     * Playback is being cut and the sink can no longer say where it is (another thread released
+     * it). Every span that started stops at the last position read, with no time; the rest never
+     * played. A started reply still gets its one stop.
+     */
+    fun abandon(playedRateHz: Int): List<PlaybackEdge> {
+        val out = spans.filter { it.started }.map { span ->
+            val stopAt = minOf(lastPresented, span.endFrame ?: lastPresented).coerceAtLeast(span.startFrame)
+            PlaybackEdge(span.requestId, PlaybackEdge.Event.STOP, null, stopAt - span.startFrame, playedRateHz, span.declaredRateHz)
         }
         spans.clear()
         return out

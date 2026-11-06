@@ -88,11 +88,10 @@ class AudioTrackSink(
     private fun presentationAnchor(): Pair<Long, Long> {
         val ts = AudioTimestamp()
         val reported = runCatching { track.getTimestamp(ts) }.getOrDefault(false)
-        return if (reported) {
-            ts.framePosition to ts.nanoTime
-        } else {
-            (track.playbackHeadPosition.toLong() and 0xFFFF_FFFFL) to System.nanoTime()
-        }
+        if (reported) return ts.framePosition to ts.nanoTime
+        val head = runCatching { track.playbackHeadPosition }.getOrNull()
+            ?: throw IllegalStateException("the track cannot report its position (released?)")
+        return (head.toLong() and 0xFFFF_FFFFL) to System.nanoTime()
     }
 
     override val framesPresented: Long
