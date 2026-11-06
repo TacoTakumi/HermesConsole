@@ -252,6 +252,23 @@ class ApprovalControllerTest {
         }
 
     @Test
+    fun `in a turn engine session a final approve stamped with the open turn resolves by voice`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // A turn engine session sends finals, stamped with whatever turn is open while Hermes
+            // works; the loop drops the turn but the approval still hears the word.
+            val gateway = FakeGateway()
+            val controller = controller(gateway)
+            val prompt = TranscriptSegment(0, "clean up the temp directory", isFinal = true, endpointed = true, turnId = 3)
+            controller.onTranscript(Transcript(listOf(prompt)))
+            controller.onEvent(request)
+
+            val answer = TranscriptSegment(1, "approve", isFinal = true, endpointed = true, turnId = 3)
+            controller.onTranscript(Transcript(listOf(prompt, answer)))
+
+            assertEquals(listOf(RUN to ApprovalChoice.ONCE), gateway.resolved)
+        }
+
+    @Test
     fun `the prompt already on the transcript cannot answer for the person`() =
         runTest(UnconfinedTestDispatcher()) {
             val gateway = FakeGateway()

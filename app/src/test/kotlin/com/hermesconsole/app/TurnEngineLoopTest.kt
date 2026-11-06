@@ -402,4 +402,32 @@ class TurnEngineLoopTest {
         assertEquals(listOf(1, 2), voice.turnsOpened)
         assertEquals(listOf(LcarsCue.LISTENING_OPEN), cued)
     }
+
+    // -- while Hermes works ------------------------------------------------------------------
+
+    @Test
+    fun `words that end while Hermes works are dropped and the run goes on`() = runTest {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "scan the sector")
+        voice.turnEnd("scan the sector")
+        runCurrent()
+        assertEquals(ConsoleState.THINKING, loop.state.value)
+
+        // A stray word, or an approval answer, while the run works.
+        voice.hear(1, "approve")
+        voice.turnEnd("approve")
+        runCurrent()
+
+        assertEquals(listOf("scan the sector"), agent.dispatched, "nothing new is dispatched")
+        assertEquals(emptyList<String>(), agent.stopped, "the run is not stopped")
+        assertEquals(ConsoleState.THINKING, loop.state.value)
+
+        reply("run-1", "req-1")
+        voice.hear(2, "next question")
+        voice.turnEnd("approve next question")
+        runCurrent()
+        assertEquals(listOf("scan the sector", "next question"), agent.dispatched, "the dropped words stay out")
+    }
 }
