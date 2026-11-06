@@ -895,6 +895,8 @@ internal class WallConsole(
         // today: no AEC3 in the capture path, so the detector reads the hardware canceller's own
         // output and a dropout measurement is taken through one canceller, not two.
         aecFactory = if (SOFTWARE_AEC_ENABLED) aecFactory else null,
+        // The voice mode rides on the voice config, so the loop is built in the mode it dials.
+        turnEngineMode = backends.voice.turnEngine,
     )
 
     /**
@@ -960,6 +962,8 @@ internal class WallConsole(
         Log.i(TAG, "session -> $sessionId")
         sessions.select(sessionId)
         health.poke()
+        // In turn engine mode a session streams the mic from the moment it is entered.
+        loop.enterSession()
     }
 
     /**
@@ -983,6 +987,7 @@ internal class WallConsole(
         Log.i(TAG, "session created: ${session.id} \"${session.title}\"")
         sessions.opened(session.id)
         health.poke()
+        loop.enterSession()
     }
 
     /**

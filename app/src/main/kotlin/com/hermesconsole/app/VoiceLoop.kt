@@ -21,6 +21,7 @@ import com.hermesconsole.voiceclient.TurnEngineStatus
 import com.hermesconsole.voiceclient.TtsEvent
 import com.hermesconsole.voiceclient.VoiceManagerClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -162,6 +163,13 @@ class VoiceLoop(
      * only names the moments. Silent by default, and never trusted - see [cue].
      */
     private val cues: (LcarsCue) -> Unit = {},
+    /**
+     * Turn engine mode: a session (opened by the wake word or by a tap into a session) streams the
+     * mic until it ends, VoiceManager's turn engine decides when each turn ended and when the user
+     * cut in, and the loop reports where each reply played. Off is the classic loop. Fixed for the
+     * life of the loop: a mode change rebuilds the console.
+     */
+    private val turnEngineMode: Boolean = false,
 ) : AutoCloseable {
 
     private val _state = MutableStateFlow(ConsoleState.READY)
@@ -200,6 +208,10 @@ class VoiceLoop(
      */
     @Volatile
     private var streamingToStt = false
+
+    /** A turn engine session is open: the mic streams until it ends, whatever the turns do. */
+    @Volatile
+    private var inSession = false
 
     /**
      * The TTS request the console is currently having synthesised, or null between turns.
@@ -514,6 +526,11 @@ class VoiceLoop(
         streamingToStt = false
         wake.reset()
         _state.value = ConsoleState.READY
+        // A session's stream stopping is the one stop-listening a turn engine session has.
+        if (inSession) {
+            inSession = false
+            cue(LcarsCue.LISTENING_CLOSED)
+        }
         Log.i(TAG, "aborted (run $runId, tts $requestId) -> READY")
     }
 
@@ -523,6 +540,57 @@ class VoiceLoop(
      * prompt - and so does a barge-in, whose cut-off exchange is history, not debris. What never
      * retires is a supersede: a revision replaces the live exchange, it does not finish one.
      */
+    /**
+     * Whether the loop takes turns with the server's turn engine: the mode is on and this
+     * connection has not been refused it or lost it. Pending counts as on - the link holds the
+     * audio until the answer, and a refusal then hands the session to the classic path.
+     */
+    private fun turnEngineOn(): Boolean {
+        if (!turnEngineMode) return false
+        val status = voice.turnEngineStatus.value
+        return status == TurnEngineStatus.Ready || status == TurnEngineStatus.Pending
+    }
+
+    /**
+     * A tap into a session on the main screen (selecting one, or creating one). In turn engine
+     * mode that opens the session and its stream at once, as the wake word does; in classic mode
+     * the console stays behind the wake word, so this does nothing.
+     */
+    fun enterSession() {
+        if (_state.value != ConsoleState.READY || !turnEngineOn()) return
+        openSession(now())
+    }
+
+    /**
+     * Open a turn engine session: the mic streams from the next frame, and the session runs until
+     * [abort] ends it. The wake word's own frames were never sent - the stream starts after them.
+     */
+    @Synchronized
+    private fun openSession(atMillis: Long) {
+        retireTurn()
+        _turn.value = TurnLog(wakeAtMillis = atMillis)
+        inSession = true
+        streamingToStt = true
+        _state.value = ConsoleState.LISTENING
+        Log.i(TAG, "session open -> LISTENING (turn engine)")
+        startTurn { runSession() }
+    }
+
+    /**
+     * The session's turns. The server numbers turns, so the session opens one before anything is
+     * heard; a link that drops before the ack is retried rather than closing the session, since
+     * only leaving the session ends it.
+     */
+    private suspend fun runSession() {
+        var turnId: Int? = null
+        while (turnId == null) {
+            turnId = withTimeoutOrNull(SESSION_TURN_START_RETRY_MILLIS) { openTurn() }
+            if (turnId == null) delay(SESSION_TURN_START_RETRY_MILLIS)
+        }
+        cue(LcarsCue.LISTENING_OPEN)
+        awaitCancellation()
+    }
+
     private fun retireTurn() {
         val finished = _turn.value
         // Retire only a turn that said something; carry its runId so its tool lines stay woven into
@@ -541,6 +609,8 @@ class VoiceLoop(
         // Mandatory: without it the detector keeps the hypothesis and re-fires on the frames that
         // follow - the command itself would wake the console again, mid-turn.
         wake.reset()
+
+        if (turnEngineOn()) return openSession(atMillis)
 
         retireTurn()
         _turn.value = TurnLog(wakeAtMillis = atMillis)
@@ -1329,6 +1399,9 @@ class VoiceLoop(
          * constant, not the settings knob: the knob is the follow-up window's alone.
          */
         const val WAKE_WINDOW_MILLIS = 15_000L
+
+        /** How long a session waits for a turn_start ack before it asks again. */
+        const val SESSION_TURN_START_RETRY_MILLIS = 5_000L
 
         /**
          * The quiet beat before the follow-up window announces itself (T-23, REQ-21). Long
