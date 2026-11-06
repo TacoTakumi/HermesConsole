@@ -88,4 +88,14 @@ class ConsoleRebuildTest {
         assertNotNull(builds[0])
         assertNull(builds[1])
     }
+
+    @Test
+    fun `a voice mode change rebuilds the console and carries the mode to the voice client`() = runTest {
+        val turnEngine = complete.copy(voiceMode = VoiceMode.TURN_ENGINE)
+        val builds = flowOf(complete, turnEngine, turnEngine.copy(followUpWindowSeconds = 30)).backendChanges().toList()
+
+        assertEquals(listOf(complete.toBackends(), turnEngine.toBackends()), builds)
+        assertEquals(false, builds[0]!!.voice.turnEngine)
+        assertEquals(true, builds[1]!!.voice.turnEngine)
+    }
 }

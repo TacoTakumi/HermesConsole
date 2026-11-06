@@ -66,6 +66,7 @@ internal data class SettingsDraft(
     val screensaverTimeout: String,
     val recordableAudio: Boolean,
     val bargeIn: Boolean,
+    val voiceMode: VoiceMode = VoiceMode.CLASSIC,
 ) {
 
     /** The screen as it opens (REQ-17): every stored value already in its field. */
@@ -81,6 +82,7 @@ internal data class SettingsDraft(
         screensaverTimeout = initial.screensaverTimeoutSeconds.toString(),
         recordableAudio = initial.recordableAudio,
         bargeIn = initial.bargeIn,
+        voiceMode = initial.voiceMode,
     )
 
     /**
@@ -99,7 +101,24 @@ internal data class SettingsDraft(
         screensaverTimeoutSeconds = parseIdleTimeout(screensaverTimeout.trim()) ?: return null,
         recordableAudio = recordableAudio,
         bargeIn = bargeIn,
+        voiceMode = voiceMode,
     )
+}
+
+/**
+ * The barge-in control's label. In turn engine mode the server decides barge-in and the stored
+ * switch does nothing, so the control says so instead of showing a setting that has no effect.
+ */
+internal fun bargeInLabel(draft: SettingsDraft): String = when {
+    draft.voiceMode == VoiceMode.TURN_ENGINE -> "barge-in by server"
+    draft.bargeIn -> "barge-in on"
+    else -> "barge-in off"
+}
+
+/** The voice mode control's label. */
+internal fun voiceModeLabel(draft: SettingsDraft): String = when (draft.voiceMode) {
+    VoiceMode.CLASSIC -> "voice mode classic"
+    VoiceMode.TURN_ENGINE -> "voice mode turn engine"
 }
 
 /** A host the screen may save: blank (not typed yet) or one the HTTP client would dial. */
@@ -225,9 +244,20 @@ fun SettingsScreen(
                     // Speech over a reply stops it. Off unless the tablet speaker is quiet, or the
                     // console hears itself and cuts its own replies off.
                     LcarsPill(
-                        text = if (draft.bargeIn) "barge-in on" else "barge-in off",
-                        color = if (draft.bargeIn) LcarsColors.Orange else LcarsColors.Gray,
+                        text = bargeInLabel(draft),
+                        color = if (draft.bargeIn && draft.voiceMode == VoiceMode.CLASSIC) LcarsColors.Orange else LcarsColors.Gray,
                         onClick = { draft = draft.copy(bargeIn = !draft.bargeIn) },
+                    )
+                    // Classic: the console takes turns itself. Turn engine: VoiceManager's turn
+                    // engine ends turns and handles barge-in, and a session streams the mic.
+                    LcarsPill(
+                        text = voiceModeLabel(draft),
+                        color = if (draft.voiceMode == VoiceMode.TURN_ENGINE) LcarsColors.Orange else LcarsColors.Gray,
+                        onClick = {
+                            draft = draft.copy(
+                                voiceMode = if (draft.voiceMode == VoiceMode.CLASSIC) VoiceMode.TURN_ENGINE else VoiceMode.CLASSIC,
+                            )
+                        },
                     )
                 }
             }

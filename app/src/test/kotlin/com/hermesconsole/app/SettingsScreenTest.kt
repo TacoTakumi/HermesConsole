@@ -32,6 +32,7 @@ class SettingsScreenTest {
         // Not the default, so a round trip that drops it fails.
         recordableAudio = true,
         bargeIn = true,
+        voiceMode = VoiceMode.TURN_ENGINE,
     )
 
     /** The screen as it opens: every stored value already in its field. */
@@ -54,6 +55,19 @@ class SettingsScreenTest {
         // the next time anyone pressed SAVE for an unrelated reason.
         assertEquals(true, opened.bargeIn)
         assertEquals(false, opened.copy(bargeIn = !opened.bargeIn).toSettings()!!.bargeIn)
+    }
+
+    @Test
+    fun `the voice mode opens on what is stored and saves its flip`() {
+        assertEquals(VoiceMode.TURN_ENGINE, opened.voiceMode)
+        assertEquals(VoiceMode.CLASSIC, opened.copy(voiceMode = VoiceMode.CLASSIC).toSettings()!!.voiceMode)
+    }
+
+    @Test
+    fun `in turn engine mode the barge-in control says the server handles barge-in`() {
+        assertEquals("barge-in by server", bargeInLabel(opened))
+        assertEquals("barge-in on", bargeInLabel(opened.copy(voiceMode = VoiceMode.CLASSIC)))
+        assertEquals("barge-in off", bargeInLabel(opened.copy(voiceMode = VoiceMode.CLASSIC, bargeIn = false)))
     }
 
     @Test

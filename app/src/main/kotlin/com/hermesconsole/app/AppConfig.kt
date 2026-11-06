@@ -18,6 +18,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
+ * How the console takes turns. [CLASSIC] is the on-device design: the wake word, the STT endpoint
+ * ending a turn, the follow-up window and the local barge-in detector. [TURN_ENGINE] opts the voice
+ * connection in to VoiceManager's turn engine: a session streams the mic the whole time, and the
+ * server says when a turn ended and when the user cut in.
+ */
+enum class VoiceMode(val stored: String) {
+    CLASSIC("classic"),
+    TURN_ENGINE("turn_engine");
+
+    companion object {
+        /** An unknown or missing stored value is classic: the mode is an opt-in. */
+        fun fromStored(value: String?): VoiceMode = entries.firstOrNull { it.stored == value } ?: CLASSIC
+    }
+}
+
+/**
  * The console's runtime configuration (T-23, REQ-28): where the two backends live and how we
  * authenticate to them - plus the follow-up window, the console's one behavioural knob (T-46,
  * REQ-40). All set from the settings screen, all persisted - and the two values that are
@@ -71,6 +87,12 @@ data class BackendSettings(
      * volume at 0 and headphones on the recording host.
      */
     val bargeIn: Boolean = false,
+    /**
+     * How turns are taken. Classic is the console as it always was; turn engine hands the end of
+     * a turn and barge-in to VoiceManager's turn engine and streams the mic for a whole session.
+     * Part of what the voice client dials with, so a change rebuilds the console.
+     */
+    val voiceMode: VoiceMode = VoiceMode.CLASSIC,
 ) {
 
     /**
@@ -97,6 +119,7 @@ data class BackendSettings(
                 // margin. Capping the console's dial at 5 s keeps redial traffic trivial and the
                 // restore comfortably inside the promise. REQ-10 names the behaviour, not the cap.
                 maxReconnectDelayMs = 5_000,
+                turnEngine = voiceMode == VoiceMode.TURN_ENGINE,
             ),
         )
     }
@@ -111,7 +134,7 @@ data class BackendSettings(
         "BackendSettings(hermes=$hermesHost:$hermesPort key=${hermesKey.presence()}, " +
             "vm=$vmHost:$vmPort key=${vmKey.presence()}, followUp=${followUpWindowSeconds}s, " +
             "session=${sessionTimeoutSeconds}s, screensaver=${screensaverTimeoutSeconds}s, " +
-            "voice=$voiceVolumePercent%, recordable=$recordableAudio, bargeIn=$bargeIn)"
+            "voice=$voiceVolumePercent%, recordable=$recordableAudio, bargeIn=$bargeIn, mode=$voiceMode)"
 
     private fun String.presence() = if (isBlank()) "unset" else "set"
 
@@ -230,6 +253,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
                 ?: BackendSettings.DEFAULT_VOICE_VOLUME_PERCENT,
             recordableAudio = prefs[RECORDABLE_AUDIO] ?: false,
             bargeIn = prefs[BARGE_IN] ?: false,
+            voiceMode = VoiceMode.fromStored(prefs[VOICE_MODE]),
         )
     }
 
@@ -249,6 +273,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
             prefs[SCREENSAVER_TIMEOUT_S] = settings.screensaverTimeoutSeconds
             prefs[RECORDABLE_AUDIO] = settings.recordableAudio
             prefs[BARGE_IN] = settings.bargeIn
+            prefs[VOICE_MODE] = settings.voiceMode.stored
             // Not the voice volume: the settings screen saves without it, and a SAVE there must not
             // reset what was set by voice.
         }
@@ -272,6 +297,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val VOICE_VOLUME_PERCENT = intPreferencesKey("voice_volume_percent")
         val RECORDABLE_AUDIO = booleanPreferencesKey("recordable_audio")
         val BARGE_IN = booleanPreferencesKey("barge_in")
+        val VOICE_MODE = stringPreferencesKey("voice_mode")
     }
 }
 

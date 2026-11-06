@@ -27,4 +27,10 @@ class VoiceManagerConfigTest {
         assertNotEquals(config, config.copy(apiKey = "vmp_other-made-up-token"))
         assertEquals("vmp_other-made-up-token", config.copy(apiKey = "vmp_other-made-up-token").apiKey)
     }
+
+    @Test
+    fun `a config does not opt in to the turn engine unless asked`() {
+        assertFalse(config.turnEngine)
+        assertTrue(config.copy(turnEngine = true).toString().contains("turnEngine=true"))
+    }
 }

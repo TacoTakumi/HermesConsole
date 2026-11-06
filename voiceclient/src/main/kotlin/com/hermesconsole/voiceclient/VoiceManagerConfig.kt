@@ -22,6 +22,12 @@ data class VoiceManagerConfig(
     /** First reconnect delay after the link drops; doubles up to [maxReconnectDelayMs] (REQ-10). */
     val reconnectDelayMs: Long = 500,
     val maxReconnectDelayMs: Long = 10_000,
+    /**
+     * Opt every connection in to the server's turn engine: the server then decides when a turn
+     * ends and when the user cut in over a reply. Off by default, so a plain connection behaves as
+     * it always has.
+     */
+    val turnEngine: Boolean = false,
 ) {
     init {
         require(chunkSamples > 0) { "chunkSamples must be positive" }
@@ -40,7 +46,7 @@ data class VoiceManagerConfig(
     override fun toString(): String =
         "VoiceManagerConfig(host=$host, port=$port, apiKey=***, sampleRate=$sampleRate, " +
             "chunkSamples=$chunkSamples, tls=$tls, reconnectDelayMs=$reconnectDelayMs, " +
-            "maxReconnectDelayMs=$maxReconnectDelayMs)"
+            "maxReconnectDelayMs=$maxReconnectDelayMs, turnEngine=$turnEngine)"
 
     /** OkHttp dials ws:// over the http scheme, so http/https is the right scheme here. */
     internal fun streamUrl(): HttpUrl = HttpUrl.Builder()

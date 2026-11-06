@@ -162,6 +162,20 @@ class AppConfigTest {
     }
 
     @Test
+    fun `a store without the voice mode setting runs classic`() = runBlocking {
+        // A fresh install, or a console upgraded from a build without the setting, keeps the
+        // console as it was: the server turn engine is an opt-in.
+        assertEquals(VoiceMode.CLASSIC, storeIn(scope()).read().voiceMode)
+    }
+
+    @Test
+    fun `a saved turn engine voice mode reads back`() = runBlocking {
+        val store = storeIn(scope())
+        store.save(everything.copy(voiceMode = VoiceMode.TURN_ENGINE))
+        assertEquals(VoiceMode.TURN_ENGINE, store.read().voiceMode)
+    }
+
+    @Test
     fun `a written voice volume reads back`() = runBlocking {
         val store = storeIn(scope())
         store.saveVoiceVolume(40)

@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
  * typing on glass is not worth it and the log exposure is acceptable.
  *
  *     scripts/connected-test.sh SeedSettingsTool -e vmKey ... -e hermesKey ... \
- *         -e hermesHost ... -e vmHost ...
+ *         -e hermesHost ... -e vmHost ... [-e voiceMode turn_engine]
  *
  * (Through the script, never `gradlew connectedDebugAndroidTest`: gradle's connected run
  * uninstalls the console when it finishes, wiping the very store this just seeded.)
@@ -43,6 +43,8 @@ class SeedSettingsTool {
                 vmHost = args.getString("vmHost") ?: BackendSettings.DEFAULT_VM_HOST,
                 vmPort = args.getString("vmPort")?.toIntOrNull() ?: BackendSettings.DEFAULT_VM_PORT,
                 vmKey = vmKey!!,
+                // -e voiceMode turn_engine opts in to the server turn engine; anything else is classic.
+                voiceMode = VoiceMode.fromStored(args.getString("voiceMode")),
             ),
         )
     }
