@@ -60,6 +60,33 @@ class VoiceManagerClient(
     private val ttsEvents = Channel<TtsEvent>(Channel.UNLIMITED)
     val tts: Flow<TtsEvent> = ttsEvents.receiveAsFlow()
 
+    private val _turnEngineStatus = MutableStateFlow<TurnEngineStatus>(TurnEngineStatus.Off)
+
+    /**
+     * The current connection's standing with the server's turn engine. [TurnEngineStatus.Off] for
+     * a client not configured for it; reset to [TurnEngineStatus.Pending] on every dial of one that
+     * is, because the opt-in belongs to a connection, not to the client.
+     */
+    val turnEngineStatus: StateFlow<TurnEngineStatus> = _turnEngineStatus.asStateFlow()
+
+    private val turnEndEvents = Channel<TurnEnd>(Channel.UNLIMITED)
+
+    /** The server's turn ends, in wire order. One consumer, like [tts]. */
+    val turnEnds: Flow<TurnEnd> = turnEndEvents.receiveAsFlow()
+
+    private val bargeEvents = Channel<Barge>(Channel.UNLIMITED)
+
+    /** The server's barges, in wire order. One consumer, like [tts]. */
+    val barges: Flow<Barge> = bargeEvents.receiveAsFlow()
+
+    /**
+     * Mic samples that went out on the current connection, in whole frames - the index the turn
+     * engine places a playback edge on. Zero at every dial: each connection counts its own stream.
+     */
+    @Volatile
+    var micSamplesSent: Long = 0
+        private set
+
     /**
      * Which dial the live socket belongs to. Every listener captures the generation it was created
      * under, and a callback from any other generation is dropped (REQ-10): OkHttp delivers a dead
@@ -86,7 +113,7 @@ class VoiceManagerClient(
     private var reconnectAttempt = 0
 
     private val framer = PcmFramer(config.chunkBytes) { frame ->
-        socket?.send(frame.toByteString())
+        if (socket?.send(frame.toByteString()) == true) micSamplesSent += frame.size / 2
     }
 
     /**
@@ -108,7 +135,27 @@ class VoiceManagerClient(
     @Synchronized
     fun sendAudio(samples: ShortArray) {
         if (_state.value != VoiceLinkState.Connected) return
+        // The opt-in must reach the server before the connection's first audio, and its answer
+        // decides what the audio is for: hold nothing back, drop it until the answer lands.
+        if (_turnEngineStatus.value == TurnEngineStatus.Pending) return
         framer.offer(samples)
+    }
+
+    /** A reply's first sample reached the speaker at [micSample]. Sent only on an opted-in connection. */
+    fun sendPlaybackStart(requestId: String, micSample: Long) =
+        sendPlayback(PlaybackFrame(requestId = requestId, event = "start", micSample = micSample))
+
+    /**
+     * A reply's playback ended at [micSample] after [replySample] of its samples played, counted
+     * at its audio_start rate. Sent only on an opted-in connection.
+     */
+    fun sendPlaybackStop(requestId: String, micSample: Long, replySample: Long) =
+        sendPlayback(PlaybackFrame(requestId = requestId, event = "stop", micSample = micSample, replySample = replySample))
+
+    @Synchronized
+    private fun sendPlayback(frame: PlaybackFrame) {
+        if (_turnEngineStatus.value != TurnEngineStatus.Ready) return
+        socket?.send(playbackJson.encodeToString(frame))
     }
 
     /**
@@ -192,6 +239,7 @@ class VoiceManagerClient(
         }
         generation++
         drainStaleState()
+        _turnEngineStatus.value = if (config.turnEngine) TurnEngineStatus.Pending else TurnEngineStatus.Off
         _state.value = VoiceLinkState.Connecting
         socket = http.newWebSocket(request.build(), listenerFor(generation))
     }
@@ -202,6 +250,7 @@ class VoiceManagerClient(
      */
     private fun drainStaleState() {
         framer.reset()
+        micSamplesSent = 0
         _transcript.value = Transcript()
         ttsSampleRate = null
         // A turn_start sent on the dead socket will never be acked by the new one.
@@ -209,6 +258,13 @@ class VoiceManagerClient(
         pendingTurnStart = null
         @Suppress("ControlFlowWithEmptyBody")
         while (ttsEvents.tryReceive().isSuccess) {
+        }
+        // A turn end or barge from the dead socket names a stream the new one never had.
+        @Suppress("ControlFlowWithEmptyBody")
+        while (turnEndEvents.tryReceive().isSuccess) {
+        }
+        @Suppress("ControlFlowWithEmptyBody")
+        while (bargeEvents.tryReceive().isSuccess) {
         }
     }
 
@@ -239,6 +295,8 @@ class VoiceManagerClient(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (stale()) return
             reconnectAttempt = 0
+            // Before Connected, so no capture frame can slip out ahead of the opt-in.
+            if (config.turnEngine) webSocket.send(protocolJson.encodeToString(TurnEngineFrame()))
             _state.value = VoiceLinkState.Connected
         }
 
@@ -255,7 +313,22 @@ class VoiceManagerClient(
 
                 is InboundFrame.AudioEnd -> {
                     ttsSampleRate = null
-                    ttsEvents.trySend(TtsEvent.End(frame.frame.requestId))
+                    ttsEvents.trySend(TtsEvent.End(frame.frame.requestId, frame.frame.reason))
+                }
+
+                is InboundFrame.TurnEngineReady ->
+                    if (_turnEngineStatus.value == TurnEngineStatus.Pending) _turnEngineStatus.value = TurnEngineStatus.Ready
+
+                is InboundFrame.Error -> onError(frame.frame.errorType)
+
+                is InboundFrame.TurnEnd -> if (_turnEngineStatus.value == TurnEngineStatus.Ready) {
+                    val f = frame.frame
+                    turnEndEvents.trySend(TurnEnd(turnId = f.turnId, text = f.text, micSample = f.micSample, by = f.by))
+                }
+
+                is InboundFrame.Barge -> if (_turnEngineStatus.value == TurnEngineStatus.Ready) {
+                    val f = frame.frame
+                    bargeEvents.trySend(Barge(requestId = f.requestId, onsetMicSample = f.onsetMicSample, micSample = f.micSample))
                 }
 
                 // An unsolicited ack (no waiter) is dropped, per the ignore-the-unknown posture.
@@ -292,6 +365,20 @@ class VoiceManagerClient(
         }
     }
 
+    /**
+     * An error frame. While the opt-in waits for its answer, any error is that answer - the server
+     * checks the opt-in before anything else and replies with exactly one frame. Afterwards only
+     * turn_engine_lost changes the standing; an invalid_request then is a refused playback frame.
+     */
+    private fun onError(errorType: String) {
+        when {
+            _turnEngineStatus.value == TurnEngineStatus.Pending ->
+                _turnEngineStatus.value = TurnEngineStatus.Refused(errorType)
+            errorType == TURN_ENGINE_LOST && _turnEngineStatus.value == TurnEngineStatus.Ready ->
+                _turnEngineStatus.value = TurnEngineStatus.Lost
+        }
+    }
+
     @Synchronized
     private fun authFailed() {
         // Terminal: retrying the same wrong key just hammers the server, and a bad credential is a
@@ -315,5 +402,7 @@ class VoiceManagerClient(
 
         /** Caps the doubling before maxReconnectDelayMs does, so the shift cannot overflow. */
         const val MAX_BACKOFF_SHIFT = 16
+
+        const val TURN_ENGINE_LOST = "turn_engine_lost"
     }
 }

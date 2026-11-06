@@ -19,6 +19,6 @@ sealed interface TtsEvent {
      */
     class Audio(val pcm: ByteArray, val sampleRate: Int) : TtsEvent
 
-    /** The turn's audio is complete. */
-    data class End(val requestId: String?) : TtsEvent
+    /** The turn's audio is complete. [reason] is the server's `reason` (`interrupted` after a barge), null if absent. */
+    data class End(val requestId: String?, val reason: String? = null) : TtsEvent
 }

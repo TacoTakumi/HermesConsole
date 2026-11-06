@@ -69,10 +69,68 @@ internal data class AudioStartFrame(
     @SerialName("request_id") val requestId: String? = null,
 )
 
-/** A TTS turn's audio is complete. */
+/**
+ * A TTS turn's audio is complete. [reason] says why: `complete`, `cancelled` (a tts_cancel), or
+ * `interrupted` (the turn engine took the user's speech as a barge; its barge frame came first).
+ */
 @Serializable
 internal data class AudioEndFrame(
     @SerialName("request_id") val requestId: String? = null,
+    val reason: String? = null,
+)
+
+/** A server error. The turn engine's answers to an opt-in, and its loss, come as these. */
+@Serializable
+internal data class ErrorFrame(
+    @SerialName("error_type") val errorType: String,
+    val message: String = "",
+)
+
+/** Opt the connection in to a turn engine; sent before the connection's first audio. */
+@Serializable
+internal data class TurnEngineFrame(
+    val engine: String = TURN_ENGINE_TYGER,
+    val type: String = "turn_engine",
+)
+
+/** Like [protocolJson], but leaves a null field off the wire: a playback start has no reply_sample. */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal val playbackJson = Json(protocolJson) { explicitNulls = false }
+
+/** The turn engine VoiceManager runs; the only name its `TURN_ENGINES` knows. */
+internal const val TURN_ENGINE_TYGER = "tyger"
+
+/** The server's answer to an opt-in that succeeded. */
+@Serializable
+internal data class TurnEngineReadyFrame(val engine: String)
+
+@Serializable
+internal data class TurnEndFrame(
+    @SerialName("turn_id") val turnId: Int,
+    val text: String,
+    @SerialName("mic_sample") val micSample: Long,
+    val by: String,
+)
+
+@Serializable
+internal data class BargeFrame(
+    @SerialName("request_id") val requestId: String,
+    @SerialName("onset_mic_sample") val onsetMicSample: Long,
+    @SerialName("mic_sample") val micSample: Long,
+)
+
+/**
+ * A reply's playback edge at the speaker, placed on the client's own outgoing mic stream.
+ * [replySample] is sent on a stop only, counted at the reply's audio_start rate; a null is left
+ * off the wire, as the server refuses one on a start.
+ */
+@Serializable
+internal data class PlaybackFrame(
+    @SerialName("request_id") val requestId: String,
+    val event: String,
+    @SerialName("mic_sample") val micSample: Long,
+    @SerialName("reply_sample") val replySample: Long? = null,
+    val type: String = "playback",
 )
 
 /** Ask VoiceManager to stop synthesising a turn - barge-in's outbound half (T-14). */
@@ -125,6 +183,10 @@ internal sealed interface InboundFrame {
     data class AudioStart(val frame: AudioStartFrame) : InboundFrame
     data class AudioEnd(val frame: AudioEndFrame) : InboundFrame
     data class TurnStarted(val frame: TurnStartedFrame) : InboundFrame
+    data class Error(val frame: ErrorFrame) : InboundFrame
+    data class TurnEngineReady(val frame: TurnEngineReadyFrame) : InboundFrame
+    data class TurnEnd(val frame: TurnEndFrame) : InboundFrame
+    data class Barge(val frame: BargeFrame) : InboundFrame
 }
 
 /** Parse a control frame, or null if it is malformed or of a type we do not handle. */
@@ -135,6 +197,10 @@ internal fun parseInboundFrame(text: String): InboundFrame? = runCatching {
         "audio_start" -> InboundFrame.AudioStart(protocolJson.decodeFromString<AudioStartFrame>(text))
         "audio_end" -> InboundFrame.AudioEnd(protocolJson.decodeFromString<AudioEndFrame>(text))
         "turn_started" -> InboundFrame.TurnStarted(protocolJson.decodeFromString<TurnStartedFrame>(text))
+        "error" -> InboundFrame.Error(protocolJson.decodeFromString<ErrorFrame>(text))
+        "turn_engine_ready" -> InboundFrame.TurnEngineReady(protocolJson.decodeFromString<TurnEngineReadyFrame>(text))
+        "turn_end" -> InboundFrame.TurnEnd(protocolJson.decodeFromString<TurnEndFrame>(text))
+        "barge" -> InboundFrame.Barge(protocolJson.decodeFromString<BargeFrame>(text))
         else -> null
     }
 }.getOrNull()
