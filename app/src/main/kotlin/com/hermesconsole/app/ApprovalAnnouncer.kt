@@ -39,6 +39,13 @@ class ApprovalAnnouncer(
     private val scope: CoroutineScope,
     /** Is a reply speaking right now? Then the announcement stays silent: cue-only (REQ-11). */
     private val speaking: () -> Boolean,
+    /**
+     * Offers the line to the voice loop's own connection first. In a turn engine session the loop
+     * speaks it there as a reply, so the server knows it is playing and keeps its echo out of the
+     * turn engine and the STT; it answers true when it took the line (or chose cue-only). False,
+     * or no hook, sends the line its own way, below.
+     */
+    private val onMainLink: ((String) -> Boolean)? = null,
 ) {
 
     /** The line, synthesized at [cachedRateHz], once it has been. */
@@ -54,6 +61,7 @@ class ApprovalAnnouncer(
 
     /** Say the line - from the cache when it is warm, else synthesize first, skipping nothing but a live reply. */
     fun speak() {
+        if (onMainLink?.invoke(LINE) == true) return
         if (speaking()) return
         cachedPcm?.let { return sink.play(it, cachedRateHz) }
 

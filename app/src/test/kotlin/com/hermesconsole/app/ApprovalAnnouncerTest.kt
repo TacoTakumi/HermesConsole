@@ -82,6 +82,46 @@ class ApprovalAnnouncerTest {
         }
 
     @Test
+    fun `when the main link takes the line, its own link is never opened`() =
+        runTest(UnconfinedTestDispatcher()) {
+            var opened = 0
+            val taken = mutableListOf<String>()
+            val sink = FakeSink()
+            val announcer = ApprovalAnnouncer(
+                synths = { opened++; FakeSynth() },
+                sink = sink,
+                scope = backgroundScope,
+                speaking = { false },
+                onMainLink = { line -> taken += line; true },
+            )
+
+            announcer.speak()
+
+            assertEquals(listOf(ApprovalAnnouncer.LINE), taken)
+            assertEquals(0, opened, "no separate synthesis link")
+            assertTrue(sink.plays.isEmpty(), "the main link plays it, not the one-shot")
+        }
+
+    @Test
+    fun `when the main link declines, the line goes its own way as before`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val synth = FakeSynth()
+            val sink = FakeSink()
+            val announcer = ApprovalAnnouncer(
+                synths = { synth },
+                sink = sink,
+                scope = backgroundScope,
+                speaking = { false },
+                onMainLink = { false },
+            )
+
+            announcer.speak()
+
+            assertEquals(1, synth.sent.size)
+            assertEquals(1, sink.plays.size)
+        }
+
+    @Test
     fun `later speaks replay the cache - the line is synthesized once, ever`() =
         runTest(UnconfinedTestDispatcher()) {
             var opened = 0

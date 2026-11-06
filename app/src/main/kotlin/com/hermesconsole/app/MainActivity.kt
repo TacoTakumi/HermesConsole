@@ -912,6 +912,7 @@ internal class WallConsole(
             sink = sink,
             scope = scope,
             speaking = { loop.state.value == ConsoleState.SPEAKING },
+            onMainLink = loop::announce,
         )
     }
 

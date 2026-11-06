@@ -651,4 +651,48 @@ class TurnEngineLoopTest {
         loop.abort()
         assertFalse(loop.sessionListening)
     }
+
+    // -- the approval line -------------------------------------------------------------------
+
+    @Test
+    fun `the approval line plays as a reply on the main link while Hermes waits`() = runTest {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "clean the temp directory")
+        voice.turnEnd("clean the temp directory")
+        runCurrent()
+
+        assertTrue(loop.announce("Approval required."), "a session takes the line")
+        assertEquals(Triple("req-2", "Approval required.", true), voice.ttsOut.last())
+
+        voice.emit(TtsEvent.Start("req-2", 24_000))
+        voice.emit(TtsEvent.Audio(ByteArray(480), 24_000))
+        voice.emit(TtsEvent.End("req-2"))
+        runCurrent()
+        sinks.last().presented = 240
+        capture.speak()
+        runCurrent()
+
+        assertEquals(listOf("start req-2", "stop req-2"), voice.playback.map { it.split(" ").take(2).joinToString(" ") })
+        assertEquals(ConsoleState.THINKING, loop.state.value, "the run still waits on the approval")
+
+        // The run carries on and speaks its reply as usual.
+        reply("run-1", "req-1")
+        assertEquals(ConsoleState.LISTENING, loop.state.value)
+    }
+
+    @Test
+    fun `the approval line stays off the main link once the reply is on the wire`() = runTest {
+        val loop = speaking()
+        val sent = voice.ttsOut.size
+        assertTrue(loop.announce("Approval required."), "handled: cue only")
+        assertEquals(sent, voice.ttsOut.size, "a new request would cancel the open reply")
+    }
+
+    @Test
+    fun `outside a turn engine session the loop leaves the line to its own link`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        assertFalse(loop.announce("Approval required."))
+    }
 }

@@ -228,6 +228,17 @@ class VoiceLoop(
     /** The session's finals that a dispatch or a drop already used, as (turn id, segment index). */
     private val usedFinals = mutableSetOf<Pair<Int, Int>>()
 
+    /** The approval line playing on this link as a reply of its own, or null. */
+    @Volatile
+    private var announcementId: String? = null
+
+    @Volatile
+    private var playingAnnouncement = false
+
+    /** The run's reply request has had text sent: the server has it open, and a new request would cancel it. */
+    @Volatile
+    private var replyOnWire = false
+
     /** Places the player's edges on the mic stream this connection was sent. */
     private val micClock = MicSampleClock()
 
@@ -564,6 +575,9 @@ class VoiceLoop(
         _state.value = ConsoleState.READY
         sessionFirstTurn = null
         usedFinals.clear()
+        announcementId = null
+        playingAnnouncement = false
+        replyOnWire = false
         // A session's stream stopping is the one stop-listening a turn engine session has.
         if (inSession) {
             inSession = false
@@ -659,6 +673,25 @@ class VoiceLoop(
         retireTurn()
         _turn.update { if (it.prompt.isBlank() && it.reply.isBlank()) it.copy(prompt = text) else TurnLog(prompt = text) }
         startTurn { runTurn(text) }
+    }
+
+    /**
+     * Speak [line] on this link as a reply of its own, so its playback is reported like any reply
+     * and the server keeps its echo out of the turn engine and the STT. Only in a turn engine
+     * session; false otherwise, and the caller speaks it its own way. While the run's reply is
+     * open on the server, or playing, the line is not sent - a newer request would cancel the
+     * reply - and true is still returned: the approval is cue-only then, as it always was over a
+     * reply.
+     */
+    @Synchronized
+    fun announce(line: String): Boolean {
+        if (!inSession || !turnEngineOn()) return false
+        if (replyOnWire || announcementId != null || _state.value == ConsoleState.SPEAKING) return true
+        val id = newRequestId()
+        announcementId = id
+        voice.sendTtsText(id, line, done = true)
+        Log.i(TAG, "approval line on the session's link ($id)")
+        return true
     }
 
     /**
@@ -1025,6 +1058,7 @@ class VoiceLoop(
             return failTurn(e)
         }
         ttsRequestId = requestId
+        replyOnWire = false
         _turn.update { it.copy(runId = runId, dispatchedAtMillis = now()) }
         // No cue, deliberately (REQ-39): a beep right after the person's own utterance reads as
         // the console talking over them, and the reply that follows announces itself.
@@ -1155,6 +1189,7 @@ class VoiceLoop(
     @Synchronized
     private fun speakOut(requestId: String, text: String, done: Boolean = false) {
         if (requestId != ttsRequestId) return
+        replyOnWire = true
         voice.sendTtsText(requestId, text, done)
     }
 
@@ -1290,6 +1325,10 @@ class VoiceLoop(
             // [TtsPlayer.onChunk] drops a chunk whose track has already been torn down - the two
             // together are what make a cancelled reply inaudible.
             is TtsEvent.Audio -> {
+                if (!playingTts && playingAnnouncement) {
+                    player.onChunk(event.pcm)
+                    return
+                }
                 if (!playingTts) {
                     _lastBargeIn.update { it?.copy(droppedAudioBytes = it.droppedAudioBytes + event.pcm.size) }
                     return
@@ -1346,6 +1385,11 @@ class VoiceLoop(
      */
     @Synchronized
     private fun onTtsStart(event: TtsEvent.Start) {
+        if (event.requestId != null && event.requestId == announcementId) {
+            player.onAudioStart(event.sampleRate, event.requestId)
+            playingAnnouncement = true
+            return
+        }
         if (!isCurrent(event.requestId)) return
         // The rate is the turn's, not the device's (REQ-09) - it arrives on the wire.
         // A turn engine reports each reply's playback edges, so the player tracks it by id.
@@ -1402,6 +1446,12 @@ class VoiceLoop(
     /** The turn's audio is done - if it is still this console's turn. See [isCurrent]. */
     @Synchronized
     private fun onTtsEnd(event: TtsEvent.End) {
+        if (event.requestId != null && event.requestId == announcementId) {
+            player.onAudioEnd(event.requestId)
+            announcementId = null
+            playingAnnouncement = false
+            return
+        }
         if (!isCurrent(event.requestId)) return
         player.onAudioEnd(event.requestId.takeIf { turnEngineOn() })
         // T-09: this reply's reference stream ends here. Flush the resampler's held-back tail
@@ -1442,6 +1492,7 @@ class VoiceLoop(
     private fun endTurn(repliedAloud: Boolean = false) {
         playingTts = false
         ttsRequestId = null
+        replyOnWire = false
 
         // A session has no window to close: the floor is open until the session ends, and the
         // next server turn opens now, while the reply's echo is still held back from the STT.
