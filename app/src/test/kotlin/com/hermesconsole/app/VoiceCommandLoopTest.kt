@@ -10,6 +10,8 @@ import com.hermesconsole.audio.ConvergenceGuard
 import com.hermesconsole.audio.TtsPlayer
 import com.hermesconsole.hermesclient.HermesEvent
 import com.hermesconsole.lcars.LcarsCue
+import com.hermesconsole.voiceclient.Transcript
+import com.hermesconsole.voiceclient.TranscriptSegment
 import com.hermesconsole.voiceclient.TtsEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.TestScope
@@ -112,6 +114,17 @@ class VoiceCommandLoopTest {
         voice.emit(TtsEvent.Audio(ByteArray(480), 24_000))
         voice.emit(TtsEvent.End(requestId))
         runCurrent()
+    }
+
+    /** A provisional endpoint for the open turn: VoiceManager may still revise [text]. */
+    private fun hearProvisional(index: Int, text: String) {
+        voice.transcriptState.value = voice.transcriptState.value.let { current ->
+            Transcript(
+                (current.segments.filterNot { it.index == index } +
+                    TranscriptSegment(index, text, isFinal = false, endpointed = true, turnId = voice.currentTurn))
+                    .sortedBy { it.index },
+            )
+        }
     }
 
     /** The frames sent after the last listen_stop. */
@@ -347,6 +360,71 @@ class VoiceCommandLoopTest {
         runCurrent()
 
         assertEquals(0, visitsEnded)
+    }
+
+    @Test
+    fun `a provisional stop revised to stop listening stops the run and closes the mic`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        wake.fire()
+        runCurrent()
+        speak(1)
+
+        hearProvisional(0, "stop")
+        runCurrent()
+        assertEquals(listOf("stop"), agent.dispatched)
+
+        voice.hear(0, "stop listening")
+        runCurrent()
+        speak(2)
+
+        assertEquals(listOf("stop"), agent.dispatched, "the command is never dispatched")
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(1, closeCues())
+        assertEquals("listen_stop", voice.frames.last(), "no audio after the command")
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(0, visitsEnded)
+    }
+
+    @Test
+    fun `a provisional end revised to end session stops the run and ends the visit once`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        wake.fire()
+        runCurrent()
+        speak(1)
+
+        hearProvisional(0, "end")
+        runCurrent()
+        assertEquals(listOf("end"), agent.dispatched)
+
+        voice.hear(0, "end session")
+        runCurrent()
+        speak(2)
+
+        assertEquals(listOf("end"), agent.dispatched, "the command is never dispatched")
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(1, closeCues())
+        assertEquals("listen_stop", voice.frames.last(), "no audio after the command")
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(1, visitsEnded)
+    }
+
+    @Test
+    fun `a provisional question revised to a longer one is still redispatched`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        wake.fire()
+        runCurrent()
+        speak(1)
+
+        hearProvisional(0, "what is")
+        runCurrent()
+        voice.hear(0, "what is the time")
+        runCurrent()
+
+        assertEquals(listOf("what is", "what is the time"), agent.dispatched)
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(0, closeCues())
+        assertEquals(ConsoleState.THINKING, loop.state.value)
+        assertEquals("what is the time", loop.turn.value.prompt)
     }
 
     // -- end session, turn engine mode -------------------------------------------------------

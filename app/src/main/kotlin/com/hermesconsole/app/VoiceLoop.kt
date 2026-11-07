@@ -943,6 +943,10 @@ class VoiceLoop(
         while (true) {
             _turn.update { TurnLog(wakeAtMillis = it.wakeAtMillis, prompt = thisTurn.text) }
             thisTurn = runUntilSuperseded(thisTurn, turnId) ?: return
+
+            // A revision can be a command ("stop" -> "stop listening"): the run it superseded is
+            // already stopped, so the command only has the mic left to close.
+            if (onVoiceCommand(thisTurn.text)) return
         }
     }
 
