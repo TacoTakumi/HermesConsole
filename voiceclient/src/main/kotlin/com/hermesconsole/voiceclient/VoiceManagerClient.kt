@@ -88,6 +88,11 @@ class VoiceManagerClient(
     /** The server's barges, in wire order. One consumer, like [tts]. */
     val barges: Flow<Barge> = bargeEvents.receiveAsFlow()
 
+    private val listenStoppedEvents = Channel<Long>(Channel.UNLIMITED)
+
+    /** The server's listen_stopped acks, as the mic samples it accepted. One consumer, like [tts]. */
+    val listenStopped: Flow<Long> = listenStoppedEvents.receiveAsFlow()
+
     /**
      * Mic samples that went out on the current connection, in whole frames - the index the turn
      * engine places a playback edge on. Zero at every dial: each connection counts its own stream.
@@ -193,6 +198,18 @@ class VoiceManagerClient(
         socket?.send(protocolJson.encodeToString(TtsCancelFrame(requestId = requestId)))
     }
 
+    /** Ask VoiceManager to stop listening; its ack arrives on [listenStopped]. Old servers drop it. */
+    @Synchronized
+    fun sendListenStop() {
+        socket?.send(protocolJson.encodeToString(ListenStopFrame()))
+    }
+
+    /** Ask VoiceManager to listen again after [sendListenStop]. Not acked. */
+    @Synchronized
+    fun sendListenStart() {
+        socket?.send(protocolJson.encodeToString(ListenStartFrame()))
+    }
+
     /**
      * Open a new conversation turn and return its id (D-18). Sends the bare turn_start control
      * frame and suspends until VoiceManager's turn_started ack - the server owns the turn counter,
@@ -276,6 +293,9 @@ class VoiceManagerClient(
         @Suppress("ControlFlowWithEmptyBody")
         while (bargeEvents.tryReceive().isSuccess) {
         }
+        @Suppress("ControlFlowWithEmptyBody")
+        while (listenStoppedEvents.tryReceive().isSuccess) {
+        }
     }
 
     @Synchronized
@@ -340,6 +360,8 @@ class VoiceManagerClient(
                     val f = frame.frame
                     bargeEvents.trySend(Barge(requestId = f.requestId, onsetMicSample = f.onsetMicSample, micSample = f.micSample))
                 }
+
+                is InboundFrame.ListenStopped -> listenStoppedEvents.trySend(frame.frame.micSample)
 
                 // An unsolicited ack (no waiter) is dropped, per the ignore-the-unknown posture.
                 is InboundFrame.TurnStarted -> pendingTurnStart?.complete(frame.frame.turnId)

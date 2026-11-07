@@ -177,6 +177,24 @@ internal data class TtsStreamFrame(
     val type: String = "tts_stream",
 )
 
+/** Stop listening; the server answers with [ListenStoppedFrame]. Bare by contract. */
+@Serializable
+internal data class ListenStopFrame(
+    val type: String = "listen_stop",
+)
+
+/** Resume listening after a [ListenStopFrame]. Bare, and not acked. */
+@Serializable
+internal data class ListenStartFrame(
+    val type: String = "listen_start",
+)
+
+/** The server's ack to [ListenStopFrame]: [micSample] is the mic samples it accepted on this connection. */
+@Serializable
+internal data class ListenStoppedFrame(
+    @SerialName("mic_sample") val micSample: Long,
+)
+
 /** The frame types we act on. Anything else is ignored by design. */
 internal sealed interface InboundFrame {
     data class Transcript(val frame: TranscriptFrame) : InboundFrame
@@ -187,6 +205,7 @@ internal sealed interface InboundFrame {
     data class TurnEngineReady(val frame: TurnEngineReadyFrame) : InboundFrame
     data class TurnEnd(val frame: TurnEndFrame) : InboundFrame
     data class Barge(val frame: BargeFrame) : InboundFrame
+    data class ListenStopped(val frame: ListenStoppedFrame) : InboundFrame
 }
 
 /** Parse a control frame, or null if it is malformed or of a type we do not handle. */
@@ -201,6 +220,7 @@ internal fun parseInboundFrame(text: String): InboundFrame? = runCatching {
         "turn_engine_ready" -> InboundFrame.TurnEngineReady(protocolJson.decodeFromString<TurnEngineReadyFrame>(text))
         "turn_end" -> InboundFrame.TurnEnd(protocolJson.decodeFromString<TurnEndFrame>(text))
         "barge" -> InboundFrame.Barge(protocolJson.decodeFromString<BargeFrame>(text))
+        "listen_stopped" -> InboundFrame.ListenStopped(protocolJson.decodeFromString<ListenStoppedFrame>(text))
         else -> null
     }
 }.getOrNull()
