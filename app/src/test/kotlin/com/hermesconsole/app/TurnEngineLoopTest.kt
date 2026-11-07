@@ -90,9 +90,29 @@ class TurnEngineLoopTest {
             return openTurn
         }
 
+        /** Every audio frame and listen boundary sent, in wire order. */
+        val frames = mutableListOf<String>()
+
+        private val listenAcks = Channel<Long>(Channel.UNLIMITED)
+        override val listenStopped: Flow<Long> = listenAcks.consumeAsFlow()
+
         override fun sendCapture(frame: ByteArray) {
             captured += frame
+            frames += "audio"
             if (status.value != TurnEngineStatus.Pending) micSamplesSent += frame.size / 2
+        }
+
+        override fun sendListenStop() {
+            frames += "listen_stop"
+        }
+
+        override fun sendListenStart() {
+            frames += "listen_start"
+        }
+
+        /** The server's listen_stopped ack, carrying the mic samples it accepted. */
+        fun ackListenStop(micSample: Long) {
+            listenAcks.trySend(micSample)
         }
 
         override fun sendTtsText(requestId: String, text: String, done: Boolean) {

@@ -172,6 +172,8 @@ class VoiceLoop(
      * life of the loop: a mode change rebuilds the console.
      */
     private val turnEngineMode: Boolean = false,
+    /** Where a listen_stopped ack that does not match its stop is reported. */
+    private val warn: (String) -> Unit = { Log.w(TAG, it) },
 ) : AutoCloseable {
 
     private val _state = MutableStateFlow(ConsoleState.READY)
@@ -210,6 +212,15 @@ class VoiceLoop(
      */
     @Volatile
     private var streamingToStt = false
+
+    /**
+     * Orders capture frames against the listen boundaries: no frame leaves between a listen_stop
+     * and the next listen_start, and the count recorded at a stop is exactly what was sent.
+     */
+    private val streamLock = Any()
+
+    /** The mic samples sent at each listen_stop still waiting for its ack, oldest first. */
+    private val pendingListenStops = ArrayDeque<Long>()
 
     /** A turn engine session is open: the mic streams until it ends, whatever the turns do. */
     @Volatile
@@ -412,7 +423,7 @@ class VoiceLoop(
             val frames = capture.frames().onEach { frame ->
                 // Before the barge-in check, not after: the frames that carry the interruption are
                 // the ones VoiceManager has to transcribe to make it the next turn.
-                if (streamingToStt) voice.sendCapture(frame)
+                synchronized(streamLock) { if (streamingToStt) voice.sendCapture(frame) }
 
                 // The edges of the replies on the speaker, placed on the samples sent so far: the
                 // anchor moves with every frame sent, so recording that was never sent never counts.
@@ -501,6 +512,7 @@ class VoiceLoop(
         // life of the loop, routed to whatever session is open when they land.
         scope.launch { voice.turnEnds.collect(::onTurnEnd) }
         scope.launch { voice.barges.collect(::onServerBarge) }
+        scope.launch { voice.listenStopped.collect(::onListenStopped) }
         if (turnEngineMode) player.edgeConsumer = ::onPlaybackEdge
         scope.launch { voice.turnEngineStatus.collect(::onTurnEngineStatus) }
         scope.launch { voice.dials.collect { onNewConnection() } }
@@ -571,7 +583,7 @@ class VoiceLoop(
             }
         }
 
-        streamingToStt = false
+        setStreaming(false)
         wake.reset()
         _state.value = ConsoleState.READY
         sessionFirstTurn = null
@@ -623,7 +635,7 @@ class VoiceLoop(
         retireTurn()
         _turn.value = TurnLog(wakeAtMillis = atMillis)
         inSession = true
-        streamingToStt = true
+        setStreaming(true)
         _state.value = ConsoleState.LISTENING
         Log.i(TAG, "session open -> LISTENING (turn engine)")
         startTurn { runSession() }
@@ -782,10 +794,39 @@ class VoiceLoop(
     private fun onNewConnection() {
         micClock.reset()
         synchronized(playbackStarts) { playbackStarts.clear() }
+        synchronized(streamLock) { pendingListenStops.clear() }
         if (!inSession) return
         sessionFirstTurn = null
         usedFinals.clear()
         if (_state.value == ConsoleState.LISTENING) startTurn { openSessionTurn() }
+    }
+
+    /**
+     * Start or stop the mic stream, and tell VoiceManager at each edge: listen_stop after the
+     * stream's last frame, listen_start before the next one's first. No frame when nothing changes.
+     */
+    private fun setStreaming(on: Boolean) = synchronized(streamLock) {
+        if (on == streamingToStt) return@synchronized
+        if (on) {
+            voice.sendListenStart()
+        } else {
+            pendingListenStops.addLast(voice.micSamplesSent)
+            voice.sendListenStop()
+        }
+        streamingToStt = on
+    }
+
+    /**
+     * A listen_stopped ack, checked against the samples sent when its stop went out - never the
+     * live count, which a stream started since has already moved on. A mismatch is only logged.
+     */
+    private fun onListenStopped(micSample: Long) {
+        val expected = synchronized(streamLock) { pendingListenStops.removeFirstOrNull() }
+        if (expected == null) {
+            warn("listen_stopped at mic_sample $micSample with no listen_stop pending")
+        } else if (micSample != expected) {
+            warn("listen_stopped at mic_sample $micSample, expected $expected")
+        }
     }
 
     private fun retireTurn() {
@@ -811,7 +852,7 @@ class VoiceLoop(
 
         retireTurn()
         _turn.value = TurnLog(wakeAtMillis = atMillis)
-        streamingToStt = true
+        setStreaming(true)
         _state.value = ConsoleState.LISTENING
         // No cue of its own (REQ-39): the wake's acknowledgement is the open sequence, which
         // waits for the STT turn's ack below - one figure, fired when the floor really is open.
@@ -949,7 +990,7 @@ class VoiceLoop(
     @Synchronized
     private fun closeListening() {
         cue(LcarsCue.LISTENING_CLOSED)
-        streamingToStt = false
+        setStreaming(false)
         wake.reset()
         _state.value = ConsoleState.READY
         Log.i(TAG, "listening window closed unanswered -> READY")
@@ -1290,7 +1331,7 @@ class VoiceLoop(
         // opens a fresh VoiceManager turn - the question this reply was answering keeps its old
         // turn_id, so what the speaker is saying right now is the only thing the new turn can be
         // made of (D-18).
-        streamingToStt = true
+        setStreaming(true)
         wake.reset()
         _state.value = ConsoleState.LISTENING
         retireTurn()
@@ -1527,7 +1568,7 @@ class VoiceLoop(
         // only to turns that were listening at all: a typed turn ends in the same silence it ran
         // in, and a barge-in never comes through here - the microphone stays on the interrupter.
         if (streamingToStt) cue(LcarsCue.LISTENING_CLOSED)
-        streamingToStt = false
+        setStreaming(false)
         _state.value = ConsoleState.READY
         Log.i(TAG, "turn done -> READY: ${_turn.value.summary()}")
     }
@@ -1708,6 +1749,15 @@ interface VoiceLink {
 
     /** A reply stopped at [micSample] after [replySample] samples played, at its audio_start rate. */
     fun sendPlaybackStop(requestId: String, micSample: Long, replySample: Long) = Unit
+
+    /** The mic stream stopped: the server drops its listening state and acks on [listenStopped]. */
+    fun sendListenStop() = Unit
+
+    /** The mic stream starts again after [sendListenStop]: sent before its first audio. */
+    fun sendListenStart() = Unit
+
+    /** The server's listen_stopped acks: the mic samples it accepted at each stop, in wire order. */
+    val listenStopped: Flow<Long> get() = emptyFlow()
 }
 
 private val NO_TURN_ENGINE: StateFlow<TurnEngineStatus> = MutableStateFlow(TurnEngineStatus.Off)
@@ -1745,6 +1795,11 @@ fun VoiceManagerClient.asVoiceLink(): VoiceLink = object : VoiceLink {
     override val barges: Flow<Barge> get() = this@asVoiceLink.barges
     override val micSamplesSent: Long get() = this@asVoiceLink.micSamplesSent
     override val dials: StateFlow<Long> get() = this@asVoiceLink.dials
+    override val listenStopped: Flow<Long> get() = this@asVoiceLink.listenStopped
+
+    override fun sendListenStop() = this@asVoiceLink.sendListenStop()
+
+    override fun sendListenStart() = this@asVoiceLink.sendListenStart()
 
     override fun sendPlaybackStart(requestId: String, micSample: Long) =
         this@asVoiceLink.sendPlaybackStart(requestId, micSample)
