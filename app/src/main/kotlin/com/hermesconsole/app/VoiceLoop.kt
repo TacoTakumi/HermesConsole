@@ -666,7 +666,8 @@ class VoiceLoop(
      * The server says the user's turn ended. Its text joins every final since its last turn end,
      * whatever turn they belong to, so the prompt is built here from the session's own unused
      * finals and the frame is only the signal. Only a listening session dispatches: words that end
-     * while Hermes works or speaks are dropped, so a stray word never cancels a reply.
+     * while Hermes works or speaks are dropped, so a stray word never cancels a reply. A voice
+     * command is the exception: it is acted on in any state, and never dispatched.
      */
     @Synchronized
     private fun onTurnEnd(end: TurnEnd) {
@@ -678,6 +679,7 @@ class VoiceLoop(
         if (fresh.isEmpty()) return
         usedFinals += fresh.map { it.turnId to it.index }
         val text = Transcript(fresh).text
+        if (onVoiceCommand(text)) return
         if (_state.value != ConsoleState.LISTENING) {
             Log.i(TAG, "turn_end while ${_state.value}: dropped \"$text\"")
             return
@@ -921,6 +923,9 @@ class VoiceLoop(
             awaitUtterance(windowMillis, turnFlow)
         } ?: return closeListening()
 
+        // A command is the console's own: it never reaches Hermes or the wall.
+        if (onVoiceCommand(heard.text)) return
+
         // The utterance takes the wall (T-44). On a follow-up the finished exchange is still the
         // live display - kept there through the window, so a window that closed silently left it
         // untouched - and only now, with the next turn real, does it retire onto the spoken
@@ -988,12 +993,36 @@ class VoiceLoop(
      * gate with capture no longer leaving the tablet.
      */
     @Synchronized
-    private fun closeListening() {
+    private fun closeListening(why: String = "listening window closed unanswered") {
         cue(LcarsCue.LISTENING_CLOSED)
         setStreaming(false)
         wake.reset()
         _state.value = ConsoleState.READY
-        Log.i(TAG, "listening window closed unanswered -> READY")
+        Log.i(TAG, "$why -> READY")
+    }
+
+    /** Act on [text] if it is a voice command; true when it was one and the turn is used up. */
+    private fun onVoiceCommand(text: String): Boolean =
+        when (voiceCommandOf(text)) {
+            VoiceCommand.STOP_LISTENING -> {
+                stopListening()
+                true
+            }
+            // Not acted on yet: it goes to Hermes like any other turn.
+            VoiceCommand.END_SESSION -> false
+            null -> false
+        }
+
+    /**
+     * "Stop listening": end the turn in flight, close the mic with one close cue, and wait behind
+     * the wake word. A session ends the way leaving it does. In classic mode the command is the
+     * turn's own utterance, so nothing is in flight and the floor closes as a silent one does;
+     * the turn coroutine that heard it returns on its own, uncancelled.
+     */
+    @Synchronized
+    private fun stopListening() {
+        Log.i(TAG, "stop listening command (${if (inSession) "session" else "classic"})")
+        if (inSession) abort() else closeListening("stop listening command")
     }
 
     /**
