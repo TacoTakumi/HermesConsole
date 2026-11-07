@@ -18,13 +18,13 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * "Stop listening" is a command, not a turn: it ends whatever is in flight, closes the mic with
  * one close cue and leaves the console at READY behind the wake word, with nothing dispatched.
+ * "End session" does the same and then hands the visit's end to the shell, once.
  */
 class VoiceCommandLoopTest {
 
@@ -78,6 +78,7 @@ class VoiceCommandLoopTest {
     private val cued = mutableListOf<LcarsCue>()
     private val tick = AtomicLong(0)
     private val requestIds = AtomicLong(0)
+    private var visitsEnded = 0
 
     private fun TestScope.loop(turnEngineMode: Boolean = true) = VoiceLoop(
         capture = capture,
@@ -94,6 +95,7 @@ class VoiceCommandLoopTest {
         newRequestId = { "req-${requestIds.incrementAndGet()}" },
         cues = { cued += it },
         turnEngineMode = turnEngineMode,
+        onEndSession = { visitsEnded++ },
     ).also { it.start() }
 
     private fun TestScope.speak(tag: Int = 0) {
@@ -294,14 +296,100 @@ class VoiceCommandLoopTest {
     }
 
     @Test
-    fun `end session is still a turn for now`() = runTest {
+    fun `end session in the wake window dispatches nothing, closes the mic and ends the visit once`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        wake.fire()
+        runCurrent()
+        speak(1)
+
+        voice.hear(0, "end session")
+        runCurrent()
+        speak(2)
+        advanceTimeBy(20_000)
+        runCurrent()
+
+        assertEquals(emptyList<String>(), agent.dispatched)
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(1, closeCues())
+        assertEquals(listOf("listen_start", "audio", "listen_stop"), voice.frames)
+        assertEquals(1, visitsEnded)
+    }
+
+    @Test
+    fun `goodbye in a follow-up window ends the visit once`() = runTest {
+        val loop = loop(turnEngineMode = false)
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "what time is it")
+        runCurrent()
+        reply("run-1", "req-1")
+        assertEquals(ConsoleState.LISTENING, loop.state.value, "the follow-up window is open")
+
+        voice.hear(1, "Goodbye.")
+        runCurrent()
+        speak(5)
+        advanceTimeBy(20_000)
+        runCurrent()
+
+        assertEquals(listOf("what time is it"), agent.dispatched)
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(1, closeCues())
+        assertEquals(emptyList<String>(), framesAfterStop(), "no audio after the command")
+        assertEquals(1, visitsEnded)
+    }
+
+    @Test
+    fun `stop listening does not end the visit`() = runTest {
         loop(turnEngineMode = false)
         wake.fire()
         runCurrent()
-        voice.hear(0, "end session")
+        voice.hear(0, "stop listening")
         runCurrent()
 
-        assertEquals(listOf("end session"), agent.dispatched)
-        assertTrue(LcarsCue.LISTENING_CLOSED !in cued)
+        assertEquals(0, visitsEnded)
+    }
+
+    // -- end session, turn engine mode -------------------------------------------------------
+
+    @Test
+    fun `end session in an idle session dispatches nothing, closes the mic and ends the visit once`() = runTest {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        speak(1)
+
+        voice.hear(0, "end session")
+        voice.turnEnd("end session")
+        runCurrent()
+        speak(2)
+
+        assertEquals(emptyList<String>(), agent.dispatched)
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(1, closeCues())
+        assertEquals(listOf("listen_start", "audio", "listen_stop"), voice.frames)
+        assertEquals(1, visitsEnded)
+    }
+
+    @Test
+    fun `end the session while Hermes works stops the run and ends the visit once`() = runTest {
+        val loop = loop()
+        wake.fire()
+        runCurrent()
+        voice.hear(0, "scan the sector")
+        voice.turnEnd("scan the sector")
+        runCurrent()
+        assertEquals(ConsoleState.THINKING, loop.state.value)
+
+        voice.hear(1, "Computer, end the session.")
+        voice.turnEnd("Computer, end the session.")
+        runCurrent()
+        speak(3)
+
+        assertEquals(listOf("scan the sector"), agent.dispatched)
+        assertEquals(listOf("run-1"), agent.stopped)
+        assertEquals(ConsoleState.READY, loop.state.value)
+        assertEquals(1, closeCues())
+        assertEquals(emptyList<String>(), framesAfterStop(), "no audio after the command")
+        assertEquals(1, visitsEnded)
     }
 }

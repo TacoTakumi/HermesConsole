@@ -899,6 +899,9 @@ internal class WallConsole(
         aecFactory = if (SOFTWARE_AEC_ENABLED) aecFactory else null,
         // The voice mode rides on the voice config, so the loop is built in the mode it dials.
         turnEngineMode = backends.voice.turnEngine,
+        // "End session" ends the visit as the rail tap and the idle timeout do, on the console's
+        // own scope as they are: the loop calls this from its own threads.
+        onEndSession = { scope.launch { endVisit() } },
     )
 
     /**

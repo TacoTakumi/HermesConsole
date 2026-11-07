@@ -172,6 +172,12 @@ class VoiceLoop(
      * life of the loop: a mode change rebuilds the console.
      */
     private val turnEngineMode: Boolean = false,
+    /**
+     * What "end session" hands on once the mic is closed: the shell's own end of the visit, as
+     * the rail tap and the idle timeout end it. Run on [scope], never under the loop's lock, and
+     * never trusted, like [eventTap].
+     */
+    private val onEndSession: () -> Unit = {},
     /** Where a listen_stopped ack that does not match its stop is reported. */
     private val warn: (String) -> Unit = { Log.w(TAG, it) },
 ) : AutoCloseable {
@@ -1008,10 +1014,27 @@ class VoiceLoop(
                 stopListening()
                 true
             }
-            // Not acted on yet: it goes to Hermes like any other turn.
-            VoiceCommand.END_SESSION -> false
+            VoiceCommand.END_SESSION -> {
+                endSession()
+                true
+            }
             null -> false
         }
+
+    /**
+     * "End session": stop listening, then hand the visit's end to the shell. The command can
+     * arrive under the loop's lock, and the shell's end of a visit reaches the session store, the
+     * wall and the cue player, so it runs on [scope]. By then the loop is at READY, so the abort
+     * that ending a visit starts with has nothing left to stop.
+     */
+    private fun endSession() {
+        Log.i(TAG, "end session command")
+        stopListening()
+        scope.launch {
+            runCatching { onEndSession() }
+                .onFailure { Log.w(TAG, "end session failed: ${it.message}") }
+        }
+    }
 
     /**
      * "Stop listening": end the turn in flight, close the mic with one close cue, and wait behind
