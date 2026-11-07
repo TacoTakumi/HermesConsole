@@ -2,10 +2,27 @@
 
 ## [0.5.1]
 
+### Added
+
+- Voice commands, in classic and turn engine mode. Say "stop listening" and
+  the console stops the reply or run in flight, closes the mic with the close
+  beep and stays on the session screen; the wake word goes on in the same
+  session. Say "end session", "end the session" or "goodbye" and the console
+  does the same and then leaves the session, as the rail tap does; the next
+  conversation starts a new session. Only a turn that is the whole phrase
+  counts ("computer" before it and "please" after it are allowed), and a
+  command is never sent to Hermes. In turn engine mode a command also works
+  while Hermes is working.
+
 ### Changed
 
 - The build runs on JDK 25 as well as JDK 21: Gradle 9.1.0 and Android Gradle
   Plugin 9.0.1, which compiles Kotlin itself. App behaviour is unchanged.
+- The console sends VoiceManager `listen_stop` each time it stops streaming
+  the mic, and `listen_start` before the next audio. VoiceManager 0.8.0 then
+  drops what it still held from before the stop, so words from one
+  conversation no longer leak into the next. Older VoiceManager servers
+  ignore the frames and work as before.
 
 ## [0.5.0]
 

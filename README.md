@@ -131,6 +131,28 @@ which is set in the audio config (445 ms, measured on the SM-X210). On other
 hardware, or after an OS update, measure it again with
 `scripts/connected-test.sh MicSampleLoopbackTest`.
 
+## Voice commands
+
+Two phrases are handled by the console itself and never sent to Hermes, in
+both voice modes:
+
+- "stop listening": stops the reply or run in flight, closes the mic with
+  the close beep and stays on the session screen. Say the wake word to go on
+  in the same session.
+- "end session", "end the session" or "goodbye": the same, and then the
+  console leaves the session as the rail tap does. The next conversation
+  starts a new session.
+
+Only a turn that is the whole phrase counts. "Computer" or "hey computer"
+before it and "please" after it are allowed, so "computer, stop listening
+please" works, but "how do I stop listening to podcasts" goes to Hermes. In
+turn engine mode a command also works while Hermes is working.
+
+Each time the console stops the mic stream it sends VoiceManager
+`listen_stop`, and it sends `listen_start` before the next audio. VoiceManager
+0.8.0 and later then drop what they still held from before the stop. Older
+servers ignore the frames.
+
 ## Console profile
 
 Run the console on a Hermes profile of its own, served by its own gateway
